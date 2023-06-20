@@ -1,0 +1,3687 @@
+---
+title: "Predicting the Probability of Runoff from Precipitation Data: A Binomial Regression Analysis"
+format: html
+editor: visual
+---
+
+# Purpose
+
+This document collects the **binomial data analysis** of precipitation
+and runoff data taken from published studies.
+
+# Preparation
+
+Load required packages
+
+```{r}
+library(ggplot2) # this package is used for plotting
+library(nlme) # this package is used for the gls analysis
+library(lmtest) # for the Breusch-Pagan test
+library(multcomp) # used for contrasting with the glht function
+library(reshape2)
+```
+
+Run the script with the necessary function so that they are available.
+
+```{r}
+source("01-Functions.R")
+```
+
+Set the boot strapping variable to $n=1000$.
+
+```{r}
+n.bs <- 1000
+```
+
+Import data for analysis. The imported data is pre-processed:
+
+-   runoff data \<0.1mm is set to zero.
+
+-   for each treatment we add zero runoff for a precipitation depth of
+    0.1 to make sure there is a no runoff data point. This should help
+    with convergence issues with the glm model.
+
+-   data points where runoff exceeds precipitation are removed from the
+    data set.
+
+For the gls analysis, the data frame runoff.gls is being used. For the
+binomial modeling, the data frame runoff.glm is being used. Only
+runoff.glm has the added zeros (bullet point 2).\
+
+```{r}
+load("runoff.rda")
+```
+
+# Analysis
+
+Now the data set is ready to be subsetted by article/source and then
+analyzed in a general least square model with binomial errors. We start
+with the work of Hood et al. (2007).
+
+## Hood et al. 2007
+
+We subset the data to only contain observations from this paper and we
+recode the factor Site to reduce the factor levels to the actual levels
+of this paper.
+
+```{r}
+Source="Hood2007"
+df.sub <- subset(runoff.gls,Source=="Hood2007")
+df.sub$Site<-factor(df.sub$Site)
+```
+
+### Linear Models with random effects
+
+#### Linear (original) data
+
+We start with a standard linear model but using the gls command so we
+can compare this model to the mixed-effect models later.
+
+```{r}
+m.lm <- gls(Runoff ~ Precipitation*Site,
+          data = df.sub)
+summary(m.lm)
+```
+
+Now we create a model with fixed variance structure.
+
+```{r}
+vf1Fixed <- varFixed(~Precipitation)
+m.gls1 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf1Fixed,
+          data = df.sub)
+summary(m.gls1)
+anova(m.lm,m.gls1)
+```
+
+The model with the fixed variance structure is a better fit for the data
+(AIC is less). Let's plot the residuals of both models.
+
+```{r}
+par(mfrow=c(1,2))
+plot(df.sub$Precipitation,residuals(m.lm),ylim=c(-4,10),col=df.sub$Site)
+plot(df.sub$Precipitation,residuals(m.gls1,type = "normalized"),ylim=c(-4,10),col=df.sub$Site)
+```
+
+Next we apply the VarIdent Variance Structure
+
+```{r}
+vf2 <- varIdent(~1 | Site)
+m.gls2 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf2,
+          data = df.sub)
+summary(m.gls2)
+anova(m.lm,m.gls1,m.gls2)
+```
+
+Now the VarPower structure:
+
+```{r}
+vf3 <- varPower(form=~Precipitation)
+m.gls3 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf3,
+          data = df.sub)
+summary(m.gls3)
+anova(m.lm,m.gls1,m.gls2,m.gls3)
+vf4 <- varPower(form=~Precipitation|Site)
+m.gls4 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf4,
+          data = df.sub)
+summary(m.gls4)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4)
+```
+
+Now the VarExp structure:
+
+```{r}
+vf5 <- varExp(form=~Precipitation)
+m.gls5 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf5,
+          data = df.sub)
+summary(m.gls5)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5)
+```
+
+The VarConstPower structure:
+
+```{r}
+vf6 <- varConstPower(form=~Precipitation)
+m.gls6 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf6,
+          data = df.sub)
+summary(m.gls6)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5,m.gls6)
+vf7 <- varConstPower(form=~Precipitation|Site)
+m.gls7 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf7,
+          data = df.sub)
+summary(m.gls7)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5,m.gls6,m.gls7)
+```
+
+Finally, the varComb structure:
+
+```{r}
+vf8 <- varComb(varIdent(form=~ 1 | Site),varExp(form=~Precipitation))
+m.gls8 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf8,
+          data = df.sub)
+summary(m.gls8)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5,m.gls6,m.gls7,m.gls8)
+```
+
+Let's plot the residuals of the initial and the best model
+
+```{r}
+par(mfrow=c(1,2))
+plot(df.sub$Precipitation,residuals(m.lm),ylim=c(-4,10),col=df.sub$Site)
+plot(df.sub$Precipitation,residuals(m.gls7,type = "normalized"),ylim=c(-4,10),col=df.sub$Site)
+```
+
+```{r}
+E1 <- resid(m.gls7,type = "normalized")
+coplot(E1~ Precipitation|Site,data=df.sub)
+```
+
+#### Log-10 transformed data
+
+In the next step, we perform the same analysis as above, however, we use
+the log-10 transformed data for precipitation and runoff. All analysis
+is concentrated into one chunk.
+
+```{r}
+m.log.lm <- gls(lRunoff ~ lPrecipitation*Site,
+          data = df.sub)
+vf1Fixed <- varFixed(~lPrecipitation)
+m.log.gls1 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf1Fixed,
+          data = df.sub)
+vf2 <- varIdent(~1 | Site)
+m.log.gls2 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf2,
+          data = df.sub)
+vf3 <- varPower(form=~lPrecipitation)
+m.log.gls3 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf3,
+          data = df.sub)
+vf4 <- varPower(form=~lPrecipitation|Site)
+m.log.gls4 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf4,
+          data = df.sub)
+vf5 <- varExp(form=~lPrecipitation)
+m.log.gls5 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf5,
+          data = df.sub)
+vf6 <- varConstPower(form=~lPrecipitation)
+m.log.gls6 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf6,
+          data = df.sub)
+vf7 <- varConstPower(form=~lPrecipitation|Site)
+m.log.gls7 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf7,
+          data = df.sub)
+vf8 <- varComb(varIdent(form=~ 1 | Site),varExp(form=~lPrecipitation))
+m.log.gls8 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf8,
+          data = df.sub)
+```
+
+Now we find out which has the lowest AIC
+
+```{r}
+anova(m.log.lm,m.log.gls1,m.log.gls2,m.log.gls3,m.log.gls4,m.log.gls5,m.log.gls6,m.log.gls7,m.log.gls8)
+```
+
+The gls7 model also results in the lowest AIC, as seen with the linear
+data above. Let's plot the residuals of the two models, lm and gls7:
+
+```{r}
+par(mfrow=c(1,2))
+plot(df.sub$Precipitation,residuals(m.log.lm),ylim=c(-4,4),col=df.sub$Site)
+plot(df.sub$Precipitation,residuals(m.log.gls7,type = "normalized"),ylim=c(-4,4),col=df.sub$Site)
+```
+
+#### Results interpretation gls
+
+There are now four models for further interpretation and comparison:
+
+1.  the original linear model (m.lm)
+
+2.  the linear model with the improved variance structure (m.gls7)
+
+3.  the log-transformed linear model (m.log.lm)
+
+4.  the log-transformed model with the improved variance structure
+    (m.log.gls7)
+
+For each model we compute the threshold and the threshold confidence
+interval. Then we perform the Breusch-Pagan test to see if the residual
+structure has improved. Finally, we contrast the treatments to see which
+are significantly different from each other at the $\alpha=0.05$.
+
+**Computing a results table**
+
+We start with creating an empty table that will be populated with
+results from the four models:
+
+```{r}
+  factor.levels<-rownames(m.lm$contrasts$Site)
+  # create output data frame
+  results <- CreateResultsTable("Hood2007",factor.levels)
+```
+
+Now perform boot strapping for all four models
+
+```{r}
+m.lm.bs <- BootstrappingGLS(m.lm,n.bs,df.sub,log.trans=F)
+m.gls.bs <- BootstrappingGLS(m.gls7,n.bs,df.sub,log.trans=F)
+m.log.lm.bs <- BootstrappingGLS(m.log.lm,n.bs,df.sub,log.trans=T)
+m.log.gls.bs <- BootstrappingGLS(m.log.gls7,n.bs,df.sub,log.trans=T)
+m.lm.bs$Method<-"ANCOVA"
+m.gls.bs$Method<-"ANCOVA+RE"
+m.log.lm.bs$Method<-"log-ANCOVA"
+m.log.gls.bs$Method<-"log-ANCOVA+RE"
+```
+
+Combine this information into one data.frame for later processing
+
+```{r}
+results.bs<-rbind(m.lm.bs,m.gls.bs,m.log.lm.bs,m.log.gls.bs)
+results.bs$nbth<-NULL
+results.bs$nath<-NULL
+results.bs <- melt(results.bs, id=c("Treatment", "Method"),value.name="prec.depth")
+# re-log transform data
+temp<- results.bs[grep("log",results.bs$Method),]$prec.depth
+results.bs[grep("log",results.bs$Method),]$prec.depth<-10^temp
+results.bs$Author <- Source
+```
+
+Now we populate the results table with the boot strapping data:
+
+```{r}
+results$lm<-FormatBS(m.lm.bs$threshold,m.lm.bs$CI_low,m.lm.bs$CI_high)
+results$lm_nbth <- m.lm.bs$nbth
+results$lm_nath <- m.lm.bs$nath
+results$gls<-FormatBS(m.gls.bs$threshold,m.gls.bs$CI_low,m.gls.bs$CI_high)
+results$gls_nbth <- m.gls.bs$nbth
+results$gls_nath <- m.gls.bs$nath
+# now the log-transformed data
+results$log10.lm<-FormatBS(10^m.log.lm.bs$threshold,10^m.log.lm.bs$CI_low,10^m.log.lm.bs$CI_high)
+results$log10.lm_nbth <- m.log.lm.bs$nbth
+results$log10.lm_nath <- m.log.lm.bs$nath
+results$log10.gls<-FormatBS(10^m.log.gls.bs$threshold,10^m.log.gls.bs$CI_low,10^m.log.gls.bs$CI_high)
+results$log10.gls_nbth <- m.log.gls.bs$nbth
+results$log10.gls_nath <- m.log.gls.bs$nath
+```
+
+Finally, add a line with the Breusch-Pagan test against
+heteroskedasticity.
+
+```{r}
+results[nrow(results) + 1,] = c(results$Article[1],"BP-test",format(round(PerformBS(m.lm),2),nsmall=2),
+                                NA,
+                                NA,
+                                format(round(PerformBS(m.gls7),2),nsmall=2),
+                                NA,
+                                NA,
+                                format(round(PerformBS(m.log.lm),2),nsmall=2),
+                                NA,
+                                NA,
+                                format(round(PerformBS(m.log.gls7),2),nsmall=2),
+                                NA,
+                                NA)
+```
+
+**Contrasting**
+
+For the gls models, we further investigate which treatments are
+significantly different from each other but only on the **best** model
+so far. We use the AIC to determine the best model (note, the response
+variable is different for the linear and the log-transformed models.
+Therefore they cannot be used in the same anova command):
+
+```{r}
+anova(m.lm,m.gls7)
+anova(m.log.lm,m.log.gls7)
+```
+
+The m.log.gls7 model has the lowest AIC of 294. The summary of that
+model reveals:
+
+```{r}
+summary(m.log.gls7)
+```
+
+All parameters are highly significant. The (intercept) term is the
+control treatment. LID and Traditional are significantly different from
+control. Finally, we want to find out, if LID and Traditional are also
+significantly different from another. For that we need to define the
+contrasts. Running `coef(m.log.gls7)` informs us of the number of model
+coefficients as well as the type so that we can define the contrast
+matrix accordingly.
+
+```{r}
+# first we capture all the categorial variables in the variable group
+group <- df.sub$Site
+# Then we aggregate the different model coefficients by group
+group2 <- aggregate(model.matrix(m.log.gls7,data=df.sub) ~ group, FUN=mean)
+rownames(group2) <- group2$group
+# we delete the first column
+(group2 <- group2[,-1])
+# for the numerical variable Precipitation we set the values in group2 to 1 
+# (more specifiv, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
+group2[(group2[,]>0)]<-1
+
+# now we can define the contrasts of interest
+contrasts <- as.matrix(rbind(group2["Control",]-group2["LID",],
+                   group2["Control",]-group2["Traditional",],
+                   group2["Traditional",]-group2["LID",]))
+# the following row is optional
+row.names(contrasts)<- c("Control-LID","Control-Trad","Trad-LID")
+# Compute the test using glht
+test <- glht(m.log.gls7, linfct = contrasts)
+
+# Summarize the test results
+summary(test)
+```
+
+Results from the contrasts show that Control and LID are different and
+that Traditional and LID are different, however, Control and Traditional
+are not different. We combine the two to see if the model becomes
+significantly 'worse'.
+
+```{r}
+df.sub$Site <- df.sub$Site
+levels(df.sub$Site)
+# combining Control and Traditional
+levels(df.sub$Site) <- c("CT","LID","CT")
+vf7 <- varConstPower(form=~lPrecipitation|Site)
+m.log.gls7a <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf7,
+          data = df.sub)
+summary(m.log.gls7a)
+#anova(m.log.gls7,m.log.gls7a,test="Chi")
+anova(m.log.gls7,m.log.gls7a)
+```
+
+The anova command returns an error. However, we observe the summary
+output and the interaction term is not significant, so we finally
+evaluate a model with the main effects only.
+
+```{r}
+vf7 <- varConstPower(form=~lPrecipitation|Site)
+m.log.gls7b <- gls(lRunoff ~ lPrecipitation+Site,
+             weights = vf7,
+          data = df.sub)
+summary(m.log.gls7b)
+#anova(m.log.gls7a,m.log.gls7b,test="Chi")
+anova(m.log.gls7a,m.log.gls7b)
+```
+
+### Binomial Modeling using GLM
+
+We call Site Treatment from now on:
+
+```{r}
+df.sub <- subset(runoff.glm,Source=="Hood2007")
+names(df.sub)[names(df.sub)=="Site"]  <- "Treatment"
+# recode the site factor levels
+df.sub$Treatment<-factor(df.sub$Treatment)
+```
+
+For the binomial modeling we use a binomial response variable as we are
+only interested, if a storm (precipitation depth) has resulted in runoff
+(binary.runoff==1) or not (binary.runoff==0). First, we determine the
+best log-link. We test logit (the default), probit, and cloglog.
+
+```{r}
+m.glm.1a <- glm(binary.runoff ~ lPrecipitation*Treatment,
+          data = df.sub,
+          family = binomial(link="logit"))
+anova(m.glm.1a,test="Chi")
+
+m.glm.1b <- glm(binary.runoff ~ lPrecipitation*Treatment,
+          data = df.sub,
+          family = binomial(link="probit"))
+summary(m.glm.1b)
+anova(m.glm.1a,m.glm.1b,test="Chi")
+
+m.glm.1c <- glm(binary.runoff ~ lPrecipitation*Treatment,
+            data = df.sub,
+            family = binomial(link="cloglog"))
+summary(m.glm.1c)
+anova(m.glm.1a,m.glm.1b,m.glm.1c,test="Chi")
+```
+
+The residual deviation is slightly lower for the probit so we use the
+probit link. Now we simplify the model to only include significant
+variables.
+
+```{r}
+drop1(m.glm.1b,test="Chi")
+
+#drop1 indicates the interaction between preciptation and treatment is not significant. We remove this interaction. 
+
+m.glm.2 <- glm(binary.runoff ~ lPrecipitation+Treatment,
+          data = df.sub,
+          family = binomial(link="probit"))
+summary(m.glm.2)
+```
+
+Let's test if the model has become significantly 'worse':
+
+```{r}
+
+anova(m.glm.1b,m.glm.2, test="Chi")
+```
+
+That is not the case, so we accept m.glm.2 as the best model. From
+summary(m.glm.2) we know that the mean values of LID and Traditional are
+significantly different from control. Let's test (contrast), if LID and
+Tradtional are significantly different form another.
+
+```{r}
+# first we extract the categorial variables
+group <- df.sub$Treatment
+# Then we aggregate the different model coefficients by group
+group2 <- aggregate(model.matrix(m.glm.2,data=df.sub) ~ group, FUN=mean)
+rownames(group2) <- group2$group
+# we delete the first column
+(group2 <- group2[,-1])
+# for the numerical variable Precipitation we set the values in group2 to 1 
+# (more specifiv, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
+group2[(group2[,]>0)]<-1
+
+# now we can define the contrasts of interest
+contrasts <- as.matrix(rbind(group2["Control",]-group2["LID",],
+                   group2["Control",]-group2["Traditional",],
+                   group2["Traditional",]-group2["LID",]))
+# the following row is optional
+row.names(contrasts)<- c("Control-LID","Control-Trad","Trad-LID")
+# Compute the test using glht
+test <- glht(m.glm.2, linfct = contrasts)
+
+# Summarize the test results
+summary(test)
+```
+
+LID is significantly different from the Control. However, Control and
+Traditional are not (p=0.0656). We combine the two variables to see if
+that makes a significant difference in the variance explained by the
+model.
+
+```{r}
+df.sub$Treatment2 <- df.sub$Treatment
+levels(df.sub$Treatment2)
+# combining Control and Traditional
+levels(df.sub$Treatment2) <- c("CT","LID","CT")
+m.glm.2a <- glm(binary.runoff ~ lPrecipitation+Treatment2,
+          data = df.sub,
+          family = binomial(link="probit"))
+summary(m.glm.2a)
+anova(m.glm.2, m.glm.2a,test="Chi")
+```
+
+The model becomes significantly 'worse' so we keep the 3 levels of
+treatments. Finally, we compute the predicted values:
+
+```{r}
+df.pred <- expand.grid(lPrecipitation=seq(min(df.sub$lPrecipitation)-2,max(df.sub$lPrecipitation)+1,length.out=100),
+                       Treatment=unique(df.sub$Treatment))
+df.pred$runoff.pred <-predict(m.glm.2,df.pred,type="response")
+df.pred$Precipitation<-10^df.pred$lPrecipitation
+```
+
+We plot the data, together with the threshold values of the original
+linear model (m.lm.bs). This information is stored on the data frame
+`m.lm.bs`.
+
+```{r}
+# extract thresholds first for better readability.
+th.1 <- m.lm.bs[( m.lm.bs$Treatment=="Control"),]$threshold
+th.2 <- m.lm.bs[( m.lm.bs$Treatment=="LID"),]$threshold
+th.3 <- m.lm.bs[( m.lm.bs$Treatment=="Traditional"),]$threshold
+
+ggplot(df.pred,aes(x=Precipitation,y=runoff.pred))+
+  geom_line(aes(color=Treatment))+xlab("Precipitation [mm]")+theme_gray()+
+  ylab("Runoff Probability [-]")+theme(legend.position = "top")+
+  ggtitle("Hood et al. (2007) - Probit link with log-transformed precipitation")+
+  geom_jitter(df.sub,mapping=aes(x=Precipitation, y=binary.runoff,color=Treatment),
+              width=0, height=0.02)+xlim(0,50)+
+  geom_hline(yintercept=0.90, linetype="dashed", color="black")+ 
+  geom_hline(yintercept=0.10, linetype="dashed", color="black")+
+  geom_vline(xintercept=th.1, linetype="dotted", color="red")+ # plot Control threshold
+  geom_vline(xintercept=th.2, linetype="dotted", color="green")+# plot LID threshold
+  geom_vline(xintercept=th.3, linetype="dotted", color="blue")# plot Traditional threshold
+```
+
+We use the probabilities of 10% and 90% to determine precipitation
+depths which do not result low chance of runoff (p\<0.1), high chance of
+runoff (p\>0.9) and transitioning (0.1 \< p \< 0.9). This data is
+extracted from the data frame of predicted values `df.pred`. We are
+adding this information as new columns p10 and p90 to the already
+existing results data.frame. For iterations, we use the already defined
+variable factor.levels. \### Probability Calculation
+
+```{r}
+results.bs$probability<-0
+results$p10<-0
+results$p90<-0
+results$p.m.lm<-0
+results$p.m.gls<-0
+results$p.m.log.lm<-0
+results$p.m.log.gls<-0
+threshold <-
+  data.frame(
+    Treatment = character(),
+    Method = character(),
+    threshold = numeric(),
+    runoff.prob = numeric()
+  )
+for (i in 1:length(factor.levels)){
+  runoff.pred.sub <- df.pred[grep(factor.levels[i],df.pred$Treatment),]
+  temp <- approx(runoff.pred.sub$runoff.pred,runoff.pred.sub$Precipitation,0.1)[[2]]
+  temp <- round(temp,1)
+  results[(results$Treatment==factor.levels[i]),]$p10<-temp
+   temp <- approx(runoff.pred.sub$runoff.pred,runoff.pred.sub$Precipitation,0.9)[[2]]
+  temp <- round(temp,1)
+  results[(results$Treatment==factor.levels[i]),]$p90<-temp
+    ## extract p values for the thresholds
+  ### m.lm
+  th.temp<-m.lm.bs[m.lm.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="LR",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.lm<-temp
+    ### m.gls
+  th.temp<-m.gls.bs[m.gls.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="LR+ME",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.gls<-temp
+    ### m.log.lm
+  th.temp<-10^m.log.lm.bs[m.log.lm.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="log(LR)",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.log.lm<-temp
+    ### m.log.gls
+  th.temp<-10^m.log.gls.bs[m.log.gls.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="log(LR)+ME",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.log.gls<-temp
+  ##########################
+  #### now extract values for the results.bs
+  prec.depth<-results.bs[grep(factor.levels[i],results.bs$Treatment),]$prec.depth
+  temp <- round(approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,prec.depth,rule=2)[[2]],3)
+  results.bs[grep(factor.levels[i],results.bs$Treatment),]$probability<-temp
+  }
+```
+
+```{r}
+results.Hood2007<- results
+results.bs.Hood2007<-results.bs
+```
+
+Write the data necessary for plotting into an rda file
+
+```{r}
+save(df.pred,df.sub,threshold,results.bs,file="PlottingData_Hood2007.rda")
+```
+
+This concludes the analysis for this data set.
+
+## Tirpak et al. 2021
+
+We subset the data to only contain observations from this paper and we
+recode the factor Site to reduce the factor levels to the actual levels
+of this paper.
+
+```{r}
+Source <- "Tirpak2021"
+df.sub <- subset(runoff.gls,Source=="Tirpak2021")
+df.sub$Site<-factor(df.sub$Site)
+```
+
+### Linear Models with random effects
+
+#### Linear (original) data
+
+We start with a standard linear model but using the gls command so we
+can compare this model to the mixed-effect models later.
+
+```{r}
+m.lm <- gls(Runoff ~ Precipitation*Site,
+          data = df.sub)
+summary(m.lm)
+```
+
+Now we create a model with fixed variance structure.
+
+```{r}
+vf1Fixed <- varFixed(~Precipitation)
+m.gls1 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf1Fixed,
+          data = df.sub)
+summary(m.gls1)
+anova(m.lm,m.gls1)
+```
+
+The model with the fixed variance structure is a better fit for the data
+(AIC is less). Let's plot the residuals of both models.
+
+```{r}
+par(mfrow=c(1,2))
+plot(df.sub$Precipitation,residuals(m.lm),ylim=c(-4,10),col=df.sub$Site)
+plot(df.sub$Precipitation,residuals(m.gls1,type = "normalized"),ylim=c(-4,10),col=df.sub$Site)
+```
+
+Next we apply the VarIdent Variance Structure
+
+```{r}
+vf2 <- varIdent(~1 | Site)
+m.gls2 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf2,
+          data = df.sub)
+summary(m.gls2)
+anova(m.lm,m.gls1,m.gls2)
+```
+
+Now the VarPower structure:
+
+```{r}
+vf3 <- varPower(form=~Precipitation)
+m.gls3 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf3,
+          data = df.sub)
+summary(m.gls3)
+anova(m.lm,m.gls1,m.gls2,m.gls3)
+vf4 <- varPower(form=~Precipitation|Site)
+m.gls4 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf4,
+          data = df.sub)
+summary(m.gls4)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4)
+```
+
+Now the VarExp structure:
+
+```{r}
+vf5 <- varExp(form=~Precipitation)
+m.gls5 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf5,
+          data = df.sub)
+summary(m.gls5)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5)
+```
+
+The VarConstPower structure:
+
+```{r}
+vf6 <- varConstPower(form=~Precipitation)
+m.gls6 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf6,
+          data = df.sub)
+summary(m.gls6)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5,m.gls6)
+vf7 <- varConstPower(form=~Precipitation|Site)
+m.gls7 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf7,
+          data = df.sub)
+summary(m.gls7)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5,m.gls6,m.gls7)
+```
+
+Finally, the varComb structure:
+
+```{r}
+vf8 <- varComb(varIdent(form=~ 1 | Site),varExp(form=~Precipitation))
+m.gls8 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf8,
+          data = df.sub)
+summary(m.gls8)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5,m.gls6,m.gls7,m.gls8)
+```
+
+Let's plot the residuals of the initial and the best model
+
+```{r}
+par(mfrow=c(1,2))
+plot(df.sub$Precipitation,residuals(m.lm),ylim=c(-4,10),col=df.sub$Site)
+plot(df.sub$Precipitation,residuals(m.gls7,type = "normalized"),ylim=c(-4,10),col=df.sub$Site)
+```
+
+```{r}
+E1 <- resid(m.gls7,type = "normalized")
+coplot(E1~ Precipitation|Site,data=df.sub)
+```
+
+#### Log-10 transformed data
+
+In the next step, we perform the same analysis as above, however, we use
+the log-10 transformed data for precipitation and runoff. All analysis
+is concentrated into one chunk.
+
+```{r}
+m.log.lm <- gls(lRunoff ~ lPrecipitation*Site,
+          data = df.sub)
+vf1Fixed <- varFixed(~lPrecipitation)
+m.log.gls1 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf1Fixed,
+          data = df.sub)
+vf2 <- varIdent(~1 | Site)
+m.log.gls2 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf2,
+          data = df.sub)
+vf3 <- varPower(form=~lPrecipitation)
+m.log.gls3 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf3,
+          data = df.sub)
+vf4 <- varPower(form=~lPrecipitation|Site)
+m.log.gls4 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf4,
+          data = df.sub)
+vf5 <- varExp(form=~lPrecipitation)
+m.log.gls5 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf5,
+          data = df.sub)
+vf6 <- varConstPower(form=~lPrecipitation)
+m.log.gls6 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf6,
+          data = df.sub)
+vf7 <- varConstPower(form=~lPrecipitation|Site)
+m.log.gls7 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf7,
+          data = df.sub)
+vf8 <- varComb(varIdent(form=~ 1 | Site),varExp(form=~lPrecipitation))
+m.log.gls8 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf8,
+          data = df.sub)
+```
+
+Now we find out which has the lowest AIC.
+
+```{r}
+anova(m.log.lm,m.log.gls1,m.log.gls2,m.log.gls3,m.log.gls4,m.log.gls5,m.log.gls6,m.log.gls7,m.log.gls8)
+```
+
+The gls8 model resulted in the lowest AIC. Let's plot the residuals of
+the two models, lm and gls8:
+
+```{r}
+par(mfrow=c(1,2))
+plot(df.sub$Precipitation,residuals(m.log.lm),ylim=c(-4,4),col=df.sub$Site)
+plot(df.sub$Precipitation,residuals(m.log.gls8,type = "normalized"),ylim=c(-4,4),col=df.sub$Site)
+```
+
+#### Results interpretation gls
+
+There are now four models for further interpretation and comparison:
+
+1.  the original linear model (m.lm)
+
+2.  the linear model with the improved variance structure (m.gls7)
+
+3.  the log-transformed linear model (m.log.lm)
+
+4.  the log-transformed model with the improved variance structure
+    (m.log.gls8)
+
+For each model we compute the threshold and the threshold confidence
+interval. Then we perform the Breusch-Pagan test to see if the residual
+structure has improved. Finally, we contrast the treatments to see which
+are significantly different from each other at the $\alpha=0.05$.
+
+**Computing a results table**
+
+We start with creating an empty table that will be populated with
+results from the four models:
+
+```{r}
+  factor.levels<-rownames(m.lm$contrasts$Site)
+  # create output data frame
+  results <- CreateResultsTable("Tirpak2021",factor.levels)
+  
+  
+```
+
+Now perform boot strapping for all four models
+
+```{r}
+m.lm.bs <- BootstrappingGLS(m.lm,n.bs,df.sub,log.trans=F)
+m.gls.bs <- BootstrappingGLS(m.gls7,n.bs,df.sub,log.trans=F)
+m.log.lm.bs <- BootstrappingGLS(m.log.lm,n.bs,df.sub,log.trans=T)
+m.log.gls.bs <- BootstrappingGLS(m.log.gls7,n.bs,df.sub,log.trans=T)
+m.lm.bs$Method<-"ANCOVA"
+m.gls.bs$Method<-"ANCOVA+RE"
+m.log.lm.bs$Method<-"log-ANCOVA"
+m.log.gls.bs$Method<-"log-ANCOVA+RE"
+```
+
+Combine this information into one data.frame for later processing
+
+```{r}
+results.bs<-rbind(m.lm.bs,m.gls.bs,m.log.lm.bs,m.log.gls.bs)
+results.bs$nbth<-NULL
+results.bs$nath<-NULL
+results.bs <- melt(results.bs, id=c("Treatment", "Method"),value.name="prec.depth")
+# re-log transform data
+temp<- results.bs[grep("log",results.bs$Method),]$prec.depth
+results.bs[grep("log",results.bs$Method),]$prec.depth<-10^temp
+results.bs$Author <- Source
+```
+
+Now we populate the results table with the boot strapping data:
+
+```{r}
+
+results$lm<-FormatBS(m.lm.bs$threshold,m.lm.bs$CI_low,m.lm.bs$CI_high)
+results$lm_nbth <- m.lm.bs$nbth
+results$lm_nath <- m.lm.bs$nath
+results$gls<-FormatBS(m.gls.bs$threshold,m.gls.bs$CI_low,m.gls.bs$CI_high)
+results$gls_nbth <- m.gls.bs$nbth
+results$gls_nath <- m.gls.bs$nath
+# now the log-transformed data
+results$log10.lm<-FormatBS(10^m.log.lm.bs$threshold,10^m.log.lm.bs$CI_low,10^m.log.lm.bs$CI_high)
+results$log10.lm_nbth <- m.log.lm.bs$nbth
+results$log10.lm_nath <- m.log.lm.bs$nath
+results$log10.gls<-FormatBS(10^m.log.gls.bs$threshold,10^m.log.gls.bs$CI_low,10^m.log.gls.bs$CI_high)
+results$log10.gls_nbth <- m.log.gls.bs$nbth
+results$log10.gls_nath <- m.log.gls.bs$nath
+```
+
+Finally, add a line with the Breusch-Pagan test against
+heteroskedasticity
+
+```{r}
+results[nrow(results) + 1,] = c(results$Article[1],"BP-test",format(round(PerformBS(m.lm),2),nsmall=2),
+                                NA,
+                                NA,
+                                format(round(PerformBS(m.gls7),2),nsmall=2),
+                                NA,
+                                NA,
+                                format(round(PerformBS(m.log.lm),2),nsmall=2),
+                                NA,
+                                NA,
+                                format(round(PerformBS(m.log.gls8),2),nsmall=2),
+                                NA,
+                                NA)
+```
+
+**Contrasting**
+
+For the gls models, we further investigate which treatments are
+significantly different from each other but only on the **best** model
+so far. We use the AIC to determine the best model (note, the response
+variable is different for the linear and the log-transformed models.
+Therefore they cannot be used in the same anova command):
+
+```{r}
+anova(m.lm,m.gls7)
+anova(m.log.lm,m.log.gls8)
+```
+
+The m.log.gls8 model has the lowest AIC of -124.6. The summary of that
+model reveals:
+
+```{r}
+summary(m.log.gls8)
+```
+
+All parameters are highly significant. The (intercept) term is the
+modeled treatment. Modeled and retrofit are significantly different. As
+there are no other treatments, contrasting is not required.
+
+Results from the summary show that the two Site treatments are
+significantly different and the the slopes of both are significantly
+different as well.
+
+### Binomial Modeling using GLM
+
+We call Site Treatment from now on:
+
+```{r}
+# We redefine df.sub to use the glm data set which includes the 0,0.1 datapoint
+
+df.sub<-subset(runoff.glm,Source=="Tirpak2021")
+
+names(df.sub)[names(df.sub)=="Site"]  <- "Treatment"
+```
+
+For the binomial modeling we use a binomial response variable as we are
+only interested, if a storm (precipitation depth) has resulted in runoff
+(binary.runoff==1) or not (binary.runoff==0). First, we determine the
+best log-link. We test logit (the default), probit, and cloglog. For
+this data set, we do not test for interaction because the sinusoidal
+curve goes from one to zero which is indicating 100% chance of runoff
+for zero precipitation.
+
+```{r}
+m.glm.1a <- glm(binary.runoff ~ lPrecipitation+Treatment,
+          data = df.sub,
+          family = binomial(link="logit"))
+anova(m.glm.1a,test="Chi")
+
+m.glm.1b <- glm(binary.runoff ~ lPrecipitation+Treatment,
+          data = df.sub,
+          family = binomial(link="probit"))
+summary(m.glm.1b)
+anova(m.glm.1a,m.glm.1b,test="Chi")
+
+m.glm.1c <- glm(binary.runoff ~ lPrecipitation+Treatment,
+            data = df.sub,
+            family = binomial(link="cloglog"))
+summary(m.glm.1c)
+anova(m.glm.1a,m.glm.1b,m.glm.1c,test="Chi")
+```
+
+The residual deviation is slightly lower for the logit so we use the
+logit link. Now we simplify the model to only include significant
+variables.
+
+```{r}
+drop1(m.glm.1a,test="Chi")
+
+
+```
+
+The drop1 command tells us that the interaction is between precipitation
+and treatment is significant. So we accept m.glm.1a as the best model.
+
+Here we compute the predicted values:
+
+```{r}
+df.pred <- expand.grid(lPrecipitation=seq(min(df.sub$lPrecipitation)-2,max(df.sub$lPrecipitation)+1,length.out=100),
+                       Treatment=unique(df.sub$Treatment))
+df.pred$runoff.pred <-predict(m.glm.1a,df.pred,type="response")
+df.pred$Precipitation<-10^df.pred$lPrecipitation
+```
+
+We plot the data, together with the threshold values of the original
+linear model (m.lm.bs). This information is stored on the data frame
+`m.lm.bs`.
+
+```{r}
+# extract thresholds first for better readability.
+th.1 <- m.lm.bs[( m.lm.bs$Treatment=="Modeled"),]$threshold
+th.2 <- m.lm.bs[( m.lm.bs$Treatment=="Retrofit"),]$threshold
+
+
+ggplot(df.pred,aes(x=Precipitation,y=runoff.pred))+
+  geom_line(aes(color=Treatment))+xlab("Precipitation [mm]")+theme_gray()+
+  ylab("Runoff Probability [-]")+theme(legend.position = "top")+
+  ggtitle("Tirpak et al. (2021) - logit link with log-transformed precipitation")+
+  geom_jitter(df.sub,mapping=aes(x=Precipitation, y=binary.runoff,color=Treatment),
+              width=0, height=0.02)+
+  geom_hline(yintercept=0.90, linetype="dashed", color="black")+
+  geom_hline(yintercept=0.10, linetype="dashed", color="black")+
+  geom_vline(xintercept=th.1, linetype="dotted", color="red")+# plot Modeled threshold
+  geom_vline(xintercept=th.2, linetype="dotted", color="green")# plot Retrofit threshold
+ 
+```
+
+We use the probabilities of 10% and 90% to determine precipitation
+depths which do not result low chance of runoff (p\<0.1), high chance of
+runoff (p\>0.9) and transitioning (0.1 \< p \< 0.9). This data is
+extracted from the data frame of predicted values `df.pred`. We are
+adding this information as new columns p10 and p90 to the already
+existing results data.frame. For iterations, we use the already defined
+variable factor.levels.
+
+### Probability Calculation
+
+```{r}
+results.bs$probability<-0
+results$p10<-0
+results$p90<-0
+results$p.m.lm<-0
+results$p.m.gls<-0
+results$p.m.log.lm<-0
+results$p.m.log.gls<-0
+threshold <-
+  data.frame(
+    Treatment = character(),
+    Method = character(),
+    threshold = numeric(),
+    runoff.prob = numeric()
+  )
+for (i in 1:length(factor.levels)){
+  runoff.pred.sub <- df.pred[grep(factor.levels[i],df.pred$Treatment),]
+  temp <- approx(runoff.pred.sub$runoff.pred,runoff.pred.sub$Precipitation,0.1)[[2]]
+  temp <- round(temp,1)
+  results[(results$Treatment==factor.levels[i]),]$p10<-temp
+   temp <- approx(runoff.pred.sub$runoff.pred,runoff.pred.sub$Precipitation,0.9)[[2]]
+  temp <- round(temp,1)
+  results[(results$Treatment==factor.levels[i]),]$p90<-temp
+    ## extract p values for the thresholds
+  ### m.lm
+  th.temp<-m.lm.bs[m.lm.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="LR",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.lm<-temp
+    ### m.gls
+  th.temp<-m.gls.bs[m.gls.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="LR+ME",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.gls<-temp
+    ### m.log.lm
+  th.temp<-10^m.log.lm.bs[m.log.lm.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="log(LR)",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.log.lm<-temp
+    ### m.log.gls
+  th.temp<-10^m.log.gls.bs[m.log.gls.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="log(LR)+ME",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.log.gls<-temp
+    ##########################
+  #### now extract values for the results.bs
+  prec.depth<-results.bs[grep(factor.levels[i],results.bs$Treatment),]$prec.depth
+  temp <- round(approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,prec.depth,rule=2)[[2]],3)
+  results.bs[grep(factor.levels[i],results.bs$Treatment),]$probability<-temp
+}
+results.Tirpak2021<-results
+results.bs.Tirpak2021<-results.bs
+```
+
+Write the data necessary for plotting into an rda file
+
+```{r}
+save(df.pred,df.sub,results.bs,threshold,file="PlottingData_Tirpak2021.rda")
+```
+
+This concludes the analysis for this data set.
+
+## Bean et al. 2007
+
+We subset the data to only contain observations from this paper and we
+recode the factor Site to reduce the factor levels to the actual levels
+of this paper.
+
+```{r}
+Source <- "Bean2007"
+df.sub <- subset(runoff.gls,Source=="Bean2007")
+df.sub$Site<-factor(df.sub$Site)
+```
+
+### Linear Models with random effects
+
+#### Linear (original) data
+
+We start with a standard linear model but using the gls command so we
+can compare this model to the mixed-effect models later.
+
+```{r}
+m.lm <- gls(Runoff ~ Precipitation*Site,
+          data = df.sub)
+summary(m.lm)
+```
+
+Now we create a model with fixed variance structure.
+
+```{r}
+vf1Fixed <- varFixed(~Precipitation)
+m.gls1 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf1Fixed,
+          data = df.sub)
+summary(m.gls1)
+anova(m.lm,m.gls1)
+```
+
+The model with the fixed variance structure is a better fit for the data
+(AIC is less). Let's plot the residuals of both models.
+
+```{r}
+par(mfrow=c(1,2))
+plot(df.sub$Precipitation,residuals(m.lm),ylim=c(-15,15),col=df.sub$Site)
+plot(df.sub$Precipitation,residuals(m.gls1,type = "normalized"),ylim=c(-15,15),col=df.sub$Site)
+```
+
+Next we apply the VarIdent Variance Structure
+
+```{r}
+vf2 <- varIdent(~1 | Site)
+m.gls2 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf2,
+          data = df.sub)
+summary(m.gls2)
+anova(m.lm,m.gls1,m.gls2)
+```
+
+Now the VarPower structure:
+
+```{r}
+vf3 <- varPower(form=~Precipitation)
+m.gls3 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf3,
+          data = df.sub)
+summary(m.gls3)
+anova(m.lm,m.gls1,m.gls2,m.gls3)
+vf4 <- varPower(form=~Precipitation|Site)
+m.gls4 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf4,
+          data = df.sub)
+summary(m.gls4)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4)
+```
+
+Now the VarExp structure:
+
+```{r}
+vf5 <- varExp(form=~Precipitation)
+m.gls5 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf5,
+          data = df.sub)
+summary(m.gls5)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5)
+```
+
+The VarConstPower structure:
+
+```{r}
+vf6 <- varConstPower(form=~Precipitation)
+m.gls6 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf6,
+          data = df.sub)
+summary(m.gls6)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5,m.gls6)
+vf7 <- varConstPower(form=~Precipitation|Site)
+m.gls7 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf7,
+          data = df.sub)
+summary(m.gls7)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5,m.gls6,m.gls7)
+```
+
+Finally, the varComb structure:
+
+```{r}
+vf8 <- varComb(varIdent(form=~ 1 | Site),varExp(form=~Precipitation))
+m.gls8 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf8,
+          data = df.sub)
+summary(m.gls8)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5,m.gls6,m.gls7,m.gls8)
+```
+
+Let's plot the residuals of the initial and the best model
+
+```{r}
+par(mfrow=c(1,2))
+plot(df.sub$Precipitation,residuals(m.lm),ylim=c(-15,15),col=df.sub$Site)
+plot(df.sub$Precipitation,residuals(m.gls3,type = "normalized"),ylim=c(-15,15),col=df.sub$Site)
+```
+
+```{r}
+E1 <- resid(m.gls3,type = "normalized")
+coplot(E1~ Precipitation|Site,data=df.sub)
+```
+
+#### Log-10 transformed data
+
+In the next step, we perform the same analysis as above, however, we use
+the log-10 transformed data for precipitation and runoff. All analysis
+is concentrated into one chunk.
+
+```{r}
+m.log.lm <- gls(lRunoff ~ lPrecipitation*Site,
+          data = df.sub)
+vf1Fixed <- varFixed(~lPrecipitation)
+m.log.gls1 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf1Fixed,
+          data = df.sub)
+vf2 <- varIdent(~1 | Site)
+m.log.gls2 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf2,
+          data = df.sub)
+vf3 <- varPower(form=~lPrecipitation)
+m.log.gls3 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf3,
+          data = df.sub)
+vf4 <- varPower(form=~lPrecipitation|Site)
+m.log.gls4 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf4,
+          data = df.sub)
+vf5 <- varExp(form=~lPrecipitation)
+m.log.gls5 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf5,
+          data = df.sub)
+vf6 <- varConstPower(form=~lPrecipitation)
+m.log.gls6 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf6,
+          data = df.sub)
+vf7 <- varConstPower(form=~lPrecipitation|Site)
+m.log.gls7 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf7,
+          data = df.sub)
+vf8 <- varComb(varIdent(form=~ 1 | Site),varExp(form=~lPrecipitation))
+m.log.gls8 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf8,
+          data = df.sub)
+```
+
+Now we find out which has the lowest AIC
+
+```{r}
+anova(m.log.lm,m.log.gls1,m.log.gls2,m.log.gls3,m.log.gls4,m.log.gls5,m.log.gls6,m.log.gls7,m.log.gls8)
+```
+
+The m.log.gls4 model results in the lowest AIC, as seen with the linear
+data above. Let's plot the residuals of the two models, lm and
+m.log.gls4:
+
+```{r}
+par(mfrow=c(1,2))
+plot(df.sub$Precipitation,residuals(m.log.lm),ylim=c(-4,4),col=df.sub$Site)
+plot(df.sub$Precipitation,residuals(m.log.gls4,type = "normalized"),ylim=c(-4,4),col=df.sub$Site)
+```
+
+#### Results interpretation gls
+
+There are now four models for further interpretation and comparison:
+
+1.  the original linear model (m.lm)
+
+2.  the linear model with the improved variance structure (m.gls3)
+
+3.  the log-transformed linear model (m.log.lm)
+
+4.  the log-transformed model with the improved variance structure
+    (m.log.gls4)
+
+For each model we compute the threshold and the threshold confidence
+interval. Then we perform the Breusch-Pagan test to see if the residual
+structure has improved. Finally, we contrast the treatments to see which
+are significantly different from each other at the $\alpha=0.05$.
+
+**Computing a results table**
+
+We start with creating an empty table that will be populated with
+results from the four models:
+
+```{r}
+  factor.levels<-rownames(m.lm$contrasts$Site)
+  # create output data frame
+   results <- CreateResultsTable("Bean2007",factor.levels)
+ 
+```
+
+Now perform boot strapping for all four models
+
+```{r}
+m.lm.bs <- BootstrappingGLS(m.lm,n.bs,df.sub,log.trans=F)
+m.gls.bs <- BootstrappingGLS(m.gls7,n.bs,df.sub,log.trans=F)
+m.log.lm.bs <- BootstrappingGLS(m.log.lm,n.bs,df.sub,log.trans=T)
+m.log.gls.bs <- BootstrappingGLS(m.log.gls7,n.bs,df.sub,log.trans=T)
+m.lm.bs$Method<-"ANCOVA"
+m.gls.bs$Method<-"ANCOVA+RE"
+m.log.lm.bs$Method<-"log-ANCOVA"
+m.log.gls.bs$Method<-"log-ANCOVA+RE"
+```
+
+Combine this information into one data.frame for later processing
+
+```{r}
+results.bs<-rbind(m.lm.bs,m.gls.bs,m.log.lm.bs,m.log.gls.bs)
+results.bs$nbth<-NULL
+results.bs$nath<-NULL
+results.bs <- melt(results.bs, id=c("Treatment", "Method"),value.name="prec.depth")
+# re-log transform data
+temp<- results.bs[grep("log",results.bs$Method),]$prec.depth
+results.bs[grep("log",results.bs$Method),]$prec.depth<-10^temp
+results.bs$Author <- Source
+```
+
+Now we populate the results table with the boot strapping data:
+
+```{r}
+#results$lm<-FormatBS(m.lm.bs$threshold,m.lm.bs$CI_low,m.lm.bs$CI_high)
+#results$gls<-FormatBS(m.gls.bs$threshold,m.gls.bs$CI_low,m.gls.bs$CI_high)
+# now the log-transformed data
+#results$log10.lm<-FormatBS(10^m.log.lm.bs$threshold,10^m.log.lm.bs$CI_low,10^m.log.lm.bs$CI_high)
+#results$log10.gls<-FormatBS(10^m.log.gls.bs$threshold,10^m.log.gls.bs$CI_low,10^m.log.gls.bs$CI_high)
+
+
+results$lm<-FormatBS(m.lm.bs$threshold,m.lm.bs$CI_low,m.lm.bs$CI_high)
+results$lm_nbth <- m.lm.bs$nbth
+results$lm_nath <- m.lm.bs$nath
+results$gls<-FormatBS(m.gls.bs$threshold,m.gls.bs$CI_low,m.gls.bs$CI_high)
+results$gls_nbth <- m.gls.bs$nbth
+results$gls_nath <- m.gls.bs$nath
+# now the log-transformed data
+results$log10.lm<-FormatBS(10^m.log.lm.bs$threshold,10^m.log.lm.bs$CI_low,10^m.log.lm.bs$CI_high)
+results$log10.lm_nbth <- m.log.lm.bs$nbth
+results$log10.lm_nath <- m.log.lm.bs$nath
+results$log10.gls<-FormatBS(10^m.log.gls.bs$threshold,10^m.log.gls.bs$CI_low,10^m.log.gls.bs$CI_high)
+results$log10.gls_nbth <- m.log.gls.bs$nbth
+results$log10.gls_nath <- m.log.gls.bs$nath
+```
+
+Finally, add a line with the Breusch-Pagan test against
+heteroskedasticity
+
+```{r}
+results[nrow(results) + 1,] = c(results$Article[1],"BP-test",format(round(PerformBS(m.lm),2),nsmall=2),
+                                NA,
+                                NA,
+                                format(round(PerformBS(m.gls7),2),nsmall=2),
+                                NA,
+                                NA,
+                                format(round(PerformBS(m.log.lm),2),nsmall=2),
+                                NA,
+                                NA,
+                                format(round(PerformBS(m.log.gls7),2),nsmall=2),
+                                NA,
+                                NA)
+```
+
+**Contrasting**
+
+For the gls models, we further investigate which treatments are
+significantly different from each other but only on the **best** model
+so far. We use the AIC to determine the best model (note, the response
+variable is different for the linear and the log-transformed models.
+Therefore they cannot be used in the same anova command):
+
+```{r}
+anova(m.lm,m.gls3)
+anova(m.log.lm,m.log.gls4)
+```
+
+The m.log.gls4 model has the lowest AIC of 159. The summary of that
+model reveals:
+
+```{r}
+summary(m.log.gls4)
+```
+
+All parameters are NOT significant. We remove the interaction.
+
+```{r}
+vf4 <- varPower(form=~lPrecipitation|Site)
+m.log.gls4a <- gls(lRunoff ~ lPrecipitation+Site,
+             weights = vf4,
+          data = df.sub)
+summary(m.log.gls4a)
+anova(m.log.gls4,m.log.gls4a)
+```
+
+All parameters are highly significant. The (intercept) term is the
+Kinston treatment. Kinston and Wilmington are significantly different.
+As there are no other treatments, contrasting is not required.
+
+Results from the summary show that the two Site treatments are
+significantly different and the the slopes of both are significantly
+different as well.
+
+### Binomial Modeling using GLM
+
+We call Site Treatment from now on:
+
+```{r}
+df.sub <- subset(runoff.glm,Source=="Bean2007")
+names(df.sub)[names(df.sub)=="Site"]  <- "Treatment"
+# recode the site factor levels
+df.sub$Treatment<-factor(df.sub$Treatment)
+```
+
+For the binomial modeling we use a binomial response variable as we are
+only interested, if a storm (precipitation depth) has resulted in runoff
+(binary.runoff==1) or not (binary.runoff==0). First, we determine the
+best log-link. We test logit (the default), probit, and cloglog.
+
+```{r}
+m.glm.1a <- glm(binary.runoff ~ lPrecipitation*Treatment,
+          data = df.sub,
+          family = binomial(link="logit"))
+anova(m.glm.1a,test="Chi")
+
+m.glm.1b <- glm(binary.runoff ~ lPrecipitation*Treatment,
+          data = df.sub,
+          family = binomial(link="probit"))
+summary(m.glm.1b)
+anova(m.glm.1a,m.glm.1b,test="Chi")
+
+m.glm.1c <- glm(binary.runoff ~ lPrecipitation*Treatment,
+            data = df.sub,
+            family = binomial(link="cloglog"))
+summary(m.glm.1c)
+anova(m.glm.1a,m.glm.1b,m.glm.1c,test="Chi")
+```
+
+The residual deviation is slightly lower for the logit so we use the
+logit link. Now we simplify the model to only include significant
+variables.
+
+```{r}
+drop1(m.glm.1a,test="Chi")
+
+#drop1 indicates the interaction between preciptation and treatment is not significant. We remove this interaction. 
+
+m.glm.2 <- glm(binary.runoff ~ lPrecipitation+Treatment,
+          data = df.sub,
+          family = binomial(link="logit"))
+summary(m.glm.2)
+```
+
+Let's test if the model has become significantly 'worse':
+
+```{r}
+
+anova(m.glm.1a,m.glm.2, test="Chi")
+```
+
+That is not the case, so we accept m.glm.2 as the best model. From
+summary(m.glm.2) we know that the mean values of the Kinston and
+Wilmington sites are significantly different each other.
+
+Finally, we compute the predicted values:
+
+```{r}
+df.pred <- expand.grid(lPrecipitation=seq(min(df.sub$lPrecipitation)-2,max(df.sub$lPrecipitation)+1,length.out=100),
+                       Treatment=unique(df.sub$Treatment))
+df.pred$runoff.pred <-predict(m.glm.2,df.pred,type="response")
+df.pred$Precipitation<-10^df.pred$lPrecipitation
+```
+
+We plot the data, together with the threshold values of the original
+linear model (m.lm.bs). This information is stored on the data frame
+`m.lm.bs`.
+
+```{r}
+# extract thresholds first for better readability.
+th.1 <- m.lm.bs[( m.lm.bs$Treatment=="Kinston"),]$threshold
+th.2 <- m.lm.bs[( m.lm.bs$Treatment=="Wilmington"),]$threshold
+
+ggplot(df.pred,aes(x=Precipitation,y=runoff.pred))+
+  geom_line(aes(color=Treatment))+xlab("Precipitation [mm]")+theme_gray()+
+  ylab("Runoff Probability [-]")+theme(legend.position = "top")+
+  ggtitle("Bean et al. (2007) - Logit link with log-transformed precipitation")+
+  geom_jitter(df.sub,mapping=aes(x=Precipitation, y=binary.runoff,color=Treatment),
+              width=0, height=0.02)+
+  geom_hline(yintercept=0.90, linetype="dashed", color="black")+ 
+  geom_hline(yintercept=0.10, linetype="dashed", color="black")+
+  geom_vline(xintercept=th.1, linetype="dotted", color="red")+ # plot Kinston threshold
+  geom_vline(xintercept=th.2, linetype="dotted", color="green")# plot Wilmington threshold
+  
+```
+
+We use the probabilities of 10% and 90% to determine precipitation
+depths which do not result low chance of runoff (p\<0.1), high chance of
+runoff (p\>0.9) and transitioning (0.1 \< p \< 0.9). This data is
+extracted from the data frame of predicted values `df.pred`. We are
+adding this information as new columns p10 and p90 to the already
+existing results data.frame. For iterations, we use the already defined
+variable factor.levels.
+
+### Probability Calculation
+
+```{r}
+results.bs$probability<-0
+results$p10<-0
+results$p90<-0
+results$p.m.lm<-0
+results$p.m.gls<-0
+results$p.m.log.lm<-0
+results$p.m.log.gls<-0
+threshold <-
+  data.frame(
+    Treatment = character(),
+    Method = character(),
+    threshold = numeric(),
+    runoff.prob = numeric()
+  )
+for (i in 1:length(factor.levels)){
+  runoff.pred.sub <- df.pred[grep(factor.levels[i],df.pred$Treatment),]
+  temp <- approx(runoff.pred.sub$runoff.pred,runoff.pred.sub$Precipitation,0.1)[[2]]
+  temp <- round(temp,1)
+  results[(results$Treatment==factor.levels[i]),]$p10<-temp
+   temp <- approx(runoff.pred.sub$runoff.pred,runoff.pred.sub$Precipitation,0.9)[[2]]
+  temp <- round(temp,1)
+  results[(results$Treatment==factor.levels[i]),]$p90<-temp
+    ## extract p values for the thresholds
+  ### m.lm
+  th.temp<-m.lm.bs[m.lm.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="LR",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.lm<-temp
+    ### m.gls
+  th.temp<-m.gls.bs[m.gls.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="LR+ME",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.gls<-temp
+    ### m.log.lm
+  th.temp<-10^m.log.lm.bs[m.log.lm.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="log(LR)",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.log.lm<-temp
+    ### m.log.gls
+  th.temp<-10^m.log.gls.bs[m.log.gls.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="log(LR)+ME",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.log.gls<-temp
+    ##########################
+  #### now extract values for the results.bs
+  prec.depth<-results.bs[grep(factor.levels[i],results.bs$Treatment),]$prec.depth
+  temp <- round(approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,prec.depth,rule=2)[[2]],3)
+  results.bs[grep(factor.levels[i],results.bs$Treatment),]$probability<-temp
+}
+```
+
+```{r}
+results.Bean2007<- results
+results.bs.Bean2007<- results.bs
+```
+
+Write the data necessary for plotting into an rda file
+
+```{r}
+save(df.pred,df.sub,results.bs,threshold,file="PlottingData_Bean2007.rda")
+```
+
+This concludes the analysis for this data set.
+
+## Radovanovic and Bean 2022
+
+We subset the data to only contain observations from this paper and we
+recode the factor Site to reduce the factor levels to the actual levels
+of this paper.
+
+```{r}
+Source<-"RadovanovicBean2022"
+df.sub <- subset(runoff.gls,Source=="RadovanovicBean2022")
+df.sub$Site<-factor(df.sub$Site)
+levels(df.sub$Site)
+```
+
+### Linear Models with random effects
+
+#### Linear (original) data
+
+We start with a standard linear model but using the gls command so we
+can compare this model to the mixed-effect models later.
+
+```{r}
+m.lm <- gls(Runoff ~ Precipitation*Site,
+          data = df.sub)
+summary(m.lm)
+```
+
+Now we create a model with fixed variance structure.
+
+```{r}
+vf1Fixed <- varFixed(~Precipitation)
+m.gls1 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf1Fixed,
+          data = df.sub)
+summary(m.gls1)
+anova(m.lm,m.gls1)
+```
+
+The model with the fixed variance structure is a better fit for the data
+(AIC is less). Let's plot the residuals of both models.
+
+```{r}
+par(mfrow=c(1,2))
+plot(df.sub$Precipitation,residuals(m.lm),ylim=c(-4,10),col=df.sub$Site)
+plot(df.sub$Precipitation,residuals(m.gls1,type = "normalized"),ylim=c(-4,10),col=df.sub$Site)
+```
+
+Next we apply the VarIdent Variance Structure
+
+```{r}
+vf2 <- varIdent(~1 | Site)
+m.gls2 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf2,
+          data = df.sub)
+summary(m.gls2)
+anova(m.lm,m.gls1,m.gls2)
+```
+
+Now the VarPower structure:
+
+```{r}
+vf3 <- varPower(form=~Precipitation)
+m.gls3 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf3,
+          data = df.sub)
+summary(m.gls3)
+anova(m.lm,m.gls1,m.gls2,m.gls3)
+vf4 <- varPower(form=~Precipitation|Site)
+m.gls4 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf4,
+          data = df.sub)
+summary(m.gls4)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4)
+```
+
+Now the VarExp structure:
+
+```{r}
+vf5 <- varExp(form=~Precipitation)
+m.gls5 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf5,
+          data = df.sub)
+summary(m.gls5)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5)
+```
+
+The VarConstPower structure:
+
+```{r}
+vf6 <- varConstPower(form=~Precipitation)
+m.gls6 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf6,
+          data = df.sub)
+summary(m.gls6)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5,m.gls6)
+vf7 <- varConstPower(form=~Precipitation|Site)
+m.gls7 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf7,
+          data = df.sub)
+summary(m.gls7)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5,m.gls6,m.gls7)
+```
+
+Finally, the varComb structure:
+
+```{r}
+vf8 <- varComb(varIdent(form=~ 1 | Site),varExp(form=~Precipitation))
+m.gls8 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf8,
+          data = df.sub)
+summary(m.gls8)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5,m.gls6,m.gls7,m.gls8)
+```
+
+Let's plot the residuals of the initial and the best model
+
+```{r}
+par(mfrow=c(1,2))
+plot(df.sub$Precipitation,residuals(m.lm),ylim=c(-4,10),col=df.sub$Site)
+plot(df.sub$Precipitation,residuals(m.gls6,type = "normalized"),ylim=c(-4,10),col=df.sub$Site)
+```
+
+```{r}
+E1 <- resid(m.gls6,type = "normalized")
+coplot(E1~ Precipitation|Site,data=df.sub)
+```
+
+#### Log-10 transformed data
+
+In the next step, we perform the same analysis as above, however, we use
+the log-10 transformed data for precipitation and runoff. All analysis
+is concentrated into one chunk.
+
+```{r}
+m.log.lm <- gls(lRunoff ~ lPrecipitation*Site,
+          data = df.sub)
+vf1Fixed <- varFixed(~lPrecipitation)
+m.log.gls1 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf1Fixed,
+          data = df.sub)
+vf2 <- varIdent(~1 | Site)
+m.log.gls2 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf2,
+          data = df.sub)
+vf3 <- varPower(form=~lPrecipitation)
+m.log.gls3 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf3,
+          data = df.sub)
+vf4 <- varPower(form=~lPrecipitation|Site)
+m.log.gls4 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf4,
+          data = df.sub)
+vf5 <- varExp(form=~lPrecipitation)
+m.log.gls5 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf5,
+          data = df.sub)
+vf6 <- varConstPower(form=~lPrecipitation)
+m.log.gls6 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf6,
+          data = df.sub)
+vf7 <- varConstPower(form=~lPrecipitation|Site)
+m.log.gls7 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf7,
+          data = df.sub)
+vf8 <- varComb(varIdent(form=~ 1 | Site),varExp(form=~lPrecipitation))
+m.log.gls8 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf8,
+          data = df.sub)
+```
+
+Now we find out which has the lowest AIC
+
+```{r}
+anova(m.log.lm,m.log.gls1,m.log.gls2,m.log.gls3,m.log.gls4,m.log.gls5,m.log.gls6,m.log.gls7,m.log.gls8)
+```
+
+The gls8 model results in the lowest AIC. Let's plot the residuals of
+the two models, lm and gls8:
+
+```{r}
+par(mfrow=c(1,2))
+plot(df.sub$Precipitation,residuals(m.log.lm),ylim=c(-4,4),col=df.sub$Site)
+plot(df.sub$Precipitation,residuals(m.log.gls8,type = "normalized"),ylim=c(-4,4),col=df.sub$Site)
+```
+
+#### Results interpretation gls
+
+There are now four models for further interpretation and comparison:
+
+1.  the original linear model (m.lm)
+
+2.  the linear model with the improved variance structure (m.gls6)
+
+3.  the log-transformed linear model (m.log.lm)
+
+4.  the log-transformed model with the improved variance structure
+    (m.log.gls8)
+
+For each model we compute the threshold and the threshold confidence
+interval. Then we perform the Breusch-Pagan test to see if the residual
+structure has improved. Finally, we contrast the treatments to see which
+are significantly different from each other at the $\alpha=0.05$.
+
+**Computing a results table**
+
+We start with creating an empty table that will be populated with
+results from the four models:
+
+```{r}
+  factor.levels<-rownames(m.lm$contrasts$Site)
+  # create output data frame
+  results <- CreateResultsTable("RadovanovicBean2022",factor.levels)
+
+```
+
+Now perform boot strapping for all four models
+
+```{r}
+m.lm.bs <- BootstrappingGLS(m.lm,n.bs,df.sub,log.trans=F)
+m.gls.bs <- BootstrappingGLS(m.gls7,n.bs,df.sub,log.trans=F)
+m.log.lm.bs <- BootstrappingGLS(m.log.lm,n.bs,df.sub,log.trans=T)
+m.log.gls.bs <- BootstrappingGLS(m.log.gls7,n.bs,df.sub,log.trans=T)
+m.lm.bs$Method<-"ANCOVA"
+m.gls.bs$Method<-"ANCOVA+RE"
+m.log.lm.bs$Method<-"log-ANCOVA"
+m.log.gls.bs$Method<-"log-ANCOVA+RE"
+```
+
+Combine this information into one data.frame for later processing
+
+```{r}
+results.bs<-rbind(m.lm.bs,m.gls.bs,m.log.lm.bs,m.log.gls.bs)
+results.bs$nbth<-NULL
+results.bs$nath<-NULL
+results.bs <- melt(results.bs, id=c("Treatment", "Method"),value.name="prec.depth")
+# re-log transform data
+temp<- results.bs[grep("log",results.bs$Method),]$prec.depth
+results.bs[grep("log",results.bs$Method),]$prec.depth<-10^temp
+results.bs$Author <- Source
+```
+
+Now we populate the results table with the boot strapping data:
+
+```{r}
+#results$lm<-FormatBS(m.lm.bs$threshold,m.lm.bs$CI_low,m.lm.bs$CI_high)
+#results$gls<-FormatBS(m.gls.bs$threshold,m.gls.bs$CI_low,m.gls.bs$CI_high)
+# now the log-transformed data
+#results$log10.lm<-FormatBS(10^m.log.lm.bs$threshold,10^m.log.lm.bs$CI_low,10^m.log.lm.bs$CI_high)
+#results$log10.gls<-FormatBS(10^m.log.gls.bs$threshold,10^m.log.gls.bs$CI_low,10^m.log.gls.bs$CI_high)
+
+
+results$lm<-FormatBS(m.lm.bs$threshold,m.lm.bs$CI_low,m.lm.bs$CI_high)
+results$lm_nbth <- m.lm.bs$nbth
+results$lm_nath <- m.lm.bs$nath
+results$gls<-FormatBS(m.gls.bs$threshold,m.gls.bs$CI_low,m.gls.bs$CI_high)
+results$gls_nbth <- m.gls.bs$nbth
+results$gls_nath <- m.gls.bs$nath
+# now the log-transformed data
+results$log10.lm<-FormatBS(10^m.log.lm.bs$threshold,10^m.log.lm.bs$CI_low,10^m.log.lm.bs$CI_high)
+results$log10.lm_nbth <- m.log.lm.bs$nbth
+results$log10.lm_nath <- m.log.lm.bs$nath
+results$log10.gls<-FormatBS(10^m.log.gls.bs$threshold,10^m.log.gls.bs$CI_low,10^m.log.gls.bs$CI_high)
+results$log10.gls_nbth <- m.log.gls.bs$nbth
+results$log10.gls_nath <- m.log.gls.bs$nath
+```
+
+Finally, add a line with the Breusch-Pagan test against
+heteroskedasticity
+
+```{r}
+results[nrow(results) + 1,] = c(results$Article[1],"BP-test",format(round(PerformBS(m.lm),2),nsmall=2),
+                                NA,
+                                NA,
+                                format(round(PerformBS(m.gls6),2),nsmall=2),
+                                NA,
+                                NA,
+                                format(round(PerformBS(m.log.lm),2),nsmall=2),
+                                NA,
+                                NA,
+                                format(round(PerformBS(m.log.gls8),2),nsmall=2),
+                                NA,
+                                NA)
+```
+
+**Contrasting**
+
+For the gls models, we further investigate which treatments are
+significantly different from each other but only on the **best** model
+so far. We use the AIC to determine the best model (note, the response
+variable is different for the linear and the log-transformed models.
+Therefore they cannot be used in the same anova command):
+
+```{r}
+anova(m.lm,m.gls6)
+anova(m.log.lm,m.log.gls8)
+```
+
+The m.log.gls8 model has the lowest AIC of 325. The summary of that
+model reveals:
+
+```{r}
+summary(m.log.gls8)
+```
+
+All parameters are NOT significant. We remove the interaction.
+
+```{r}
+vf8 <- varComb(varIdent(form=~ 1 | Site),varExp(form=~lPrecipitation))
+m.log.gls8a <- gls(lRunoff ~ lPrecipitation+Site,
+             weights = vf8,
+          data = df.sub)
+summary(m.log.gls8a)
+```
+
+All parameters are NOT significant. None of the sites are significantly
+different from Site 607 (intercept).
+
+Next, we want to find out, if the other sites are significantly
+different from another. For that we need to define the contrasts.
+Running `coef(m.log.gls8a)` informs us of the number of model
+coefficients as well as the type so that we can define the contrast
+matrix accordingly.
+
+```{r}
+# first we capture all the categorial variables in the variable group
+group <- df.sub$Site
+# Then we aggregate the different model coefficients by group
+group2 <- aggregate(model.matrix(m.log.gls8a,data=df.sub) ~ group, FUN=mean)
+rownames(group2) <- group2$group
+# we delete the first column
+(group2 <- group2[,-1])
+# for the numerical variable Precipitation we set the values in group2 to 1 
+# (more specific, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
+group2[(group2[,]>0)]<-1
+
+# now we can define the contrasts of interest
+contrasts <- as.matrix(rbind(group2["607",]-group2["608",],
+                             group2["607",]-group2["610",],
+                             group2["607",]-group2["612",],
+                             group2["607",]-group2["618",],
+                             group2["607",]-group2["619",],
+                             group2["607",]-group2["623",],
+                             group2["607",]-group2["627",],
+                             group2["608",]-group2["610",],
+                             group2["608",]-group2["612",],
+                             group2["608",]-group2["618",],
+                             group2["608",]-group2["619",],
+                             group2["608",]-group2["623",],
+                             group2["608",]-group2["627",],
+                             group2["610",]-group2["612",],
+                             group2["610",]-group2["618",],
+                             group2["610",]-group2["619",],
+                             group2["610",]-group2["623",],
+                             group2["610",]-group2["627",],
+                             group2["612",]-group2["618",],
+                             group2["612",]-group2["619",],
+                             group2["612",]-group2["623",],
+                             group2["612",]-group2["627",],
+                             group2["618",]-group2["619",],
+                             group2["618",]-group2["623",],
+                             group2["618",]-group2["627",],
+                             group2["619",]-group2["623",],
+                             group2["619",]-group2["627",],
+                             group2["623",]-group2["627",]))
+# the following row is optional
+row.names(contrasts)<- c("607-608","607-610","607-612","607-618","607-619","607-623","607-627","608-610","608-612","608-618","608-619","608-623","608-627","610-612","610-618","610-619","610-623","610-627","612-618","612-619","612-623","612-627","618-619","618-623","618-627","619-623","619-627","623-627")
+# Compute the test using glht
+test <- glht(m.log.gls8a, linfct = contrasts)
+
+# Summarize the test results
+summary(test)
+```
+
+Results from the contrasts show that the not all sites are significantly
+different. As such, we combine sites with the highest p value and lowest
+absolute z-value.
+
+```{r}
+df.sub$Site <- df.sub$Site
+levels(df.sub$Site)
+# combining 612 and 627
+levels(df.sub$Site) <- c("607","608","610","612+627","618","619","623","612+627")
+
+vf8 <- varComb(varIdent(form=~ 1 | Site),varExp(form=~lPrecipitation))
+m.log.gls8b <- gls(lRunoff ~ lPrecipitation+Site,
+             weights = vf8,
+          data = df.sub)
+
+summary(m.log.gls8b)
+anova(m.log.gls8a,m.log.gls8b)
+#anova(m.log.gls8a,m.log.gls8b, test="Chi")
+```
+
+From the summary, we see only precipitation is significant. None of the
+sites are significantly different from Site 607 (intercept). From the
+anova, we see the new model is not significantly worse.
+
+Next, we want to find out, if the other sites are significantly
+different from another. For that we need to define the contrasts.
+Running `coef(m.log.gls8b)` informs us of the number of model
+coefficients as well as the type so that we can define the contrast
+matrix accordingly.
+
+```{r}
+# first we capture all the categorial variables in the variable group
+group <- df.sub$Site
+# Then we aggregate the different model coefficients by group
+group2 <- aggregate(model.matrix(m.log.gls8b,data=df.sub) ~ group, FUN=mean)
+rownames(group2) <- group2$group
+# we delete the first column
+(group2 <- group2[,-1])
+# for the numerical variable Precipitation we set the values in group2 to 1 
+# (more specific, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
+group2[(group2[,]>0)]<-1
+
+# now we can define the contrasts of interest
+contrasts <- as.matrix(rbind(group2["607",]-group2["608",],
+                             group2["607",]-group2["610",],
+                             group2["607",]-group2["612+627",],
+                             group2["607",]-group2["618",],
+                             group2["607",]-group2["619",],
+                             group2["607",]-group2["623",],
+                             group2["608",]-group2["610",],
+                             group2["608",]-group2["612+627",],
+                             group2["608",]-group2["618",],
+                             group2["608",]-group2["619",],
+                             group2["608",]-group2["623",],
+                             group2["610",]-group2["612+627",],
+                             group2["610",]-group2["618",],
+                             group2["610",]-group2["619",],
+                             group2["610",]-group2["623",],
+                             group2["612+627",]-group2["618",],
+                             group2["612+627",]-group2["619",],
+                             group2["612+627",]-group2["623",],
+                             group2["618",]-group2["619",],
+                             group2["618",]-group2["623",],
+                             group2["619",]-group2["623",]))
+# the following row is optional
+row.names(contrasts)<- c("607-608","607-610","607-612+627","607-618","607-619","607-623","608-610","608-612+627","608-618","608-619","608-623","610-612+627","610-618","610-619","610-623","612+627-618","612+627-619","612+627-623","618-619","618-623","619-623")
+# Compute the test using glht
+test <- glht(m.log.gls8b, linfct = contrasts)
+
+# Summarize the test results
+summary(test)
+```
+
+Results from the contrasts show that not all treatments are
+significantly different. As such, we combine sites with the highest p
+value and lowest absolute z-value.
+
+```{r}
+df.sub$Site <- df.sub$Site
+levels(df.sub$Site)
+# combining 618 and 623
+levels(df.sub$Site) <- c("607","608","610","612+627","618+623","619","618+623","612+627")
+
+vf8 <- varComb(varIdent(form=~ 1 | Site),varExp(form=~lPrecipitation))
+m.log.gls8c <- gls(lRunoff ~ lPrecipitation+Site,
+             weights = vf8,
+          data = df.sub)
+
+summary(m.log.gls8c)
+#anova(m.log.gls8b,m.log.gls8c, test="Chi")
+anova(m.log.gls8b,m.log.gls8c)
+```
+
+From the summary, we see only precipitation is significant. None of the
+sites are significantly different from Site 607 (intercept). From the
+anova, we see the new model is not significantly worse.
+
+Next, we want to find out, if the other sites are significantly
+different from another. For that we need to define the contrasts.
+Running `coef(m.log.gls8c)` informs us of the number of model
+coefficients as well as the type so that we can define the contrast
+matrix accordingly.
+
+```{r}
+# first we capture all the categorial variables in the variable group
+group <- df.sub$Site
+# Then we aggregate the different model coefficients by group
+group2 <- aggregate(model.matrix(m.log.gls8c,data=df.sub) ~ group, FUN=mean)
+rownames(group2) <- group2$group
+# we delete the first column
+(group2 <- group2[,-1])
+# for the numerical variable Precipitation we set the values in group2 to 1 
+# (more specific, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
+group2[(group2[,]>0)]<-1
+
+# now we can define the contrasts of interest
+contrasts <- as.matrix(rbind(group2["607",]-group2["608",],
+                             group2["607",]-group2["610",],
+                             group2["607",]-group2["612+627",],
+                             group2["607",]-group2["618+623",],
+                             group2["607",]-group2["619",],
+                             group2["608",]-group2["610",],
+                             group2["608",]-group2["612+627",],
+                             group2["608",]-group2["618+623",],
+                             group2["608",]-group2["619",],
+                             group2["610",]-group2["612+627",],
+                             group2["610",]-group2["618+623",],
+                             group2["610",]-group2["619",],
+                             group2["612+627",]-group2["618+623",],
+                             group2["612+627",]-group2["619",],
+                             group2["618+623",]-group2["619",]))
+# the following row is optional
+row.names(contrasts)<- c("607-608","607-610","607-612+627","607-618+623","607-619","608-610","608-612+627","608-618+623","608-619","610-612+627","610-618+623","610-619","612+627-618+623","612+627-619","618+623-619")
+# Compute the test using glht
+test <- glht(m.log.gls8c, linfct = contrasts)
+
+# Summarize the test results
+summary(test)
+```
+
+Results from the contrasts show that not all treatments are
+significantly different. As such, we combine sites with the highest p
+value and lowest absolute z-value.
+
+```{r}
+df.sub$Site <- df.sub$Site
+levels(df.sub$Site)
+# combining 608 and 619
+levels(df.sub$Site) <- c("607","608+619","610","612+627","618+623","608+619","618+623","612+627")
+
+vf8 <- varComb(varIdent(form=~ 1 | Site),varExp(form=~lPrecipitation))
+m.log.gls8d <- gls(lRunoff ~ lPrecipitation+Site,
+             weights = vf8,
+          data = df.sub)
+
+summary(m.log.gls8d)
+#anova(m.log.gls8c,m.log.gls8d,test="Chi")
+anova(m.log.gls8c,m.log.gls8d)
+```
+
+From the summary, we see only precipitation is significant. None of the
+sites are significantly different from Site 607 (intercept). From the
+anova, we see the new model is not significantly worse.
+
+Next, we want to find out, if the other sites are significantly
+different from another. For that we need to define the contrasts.
+Running `coef(m.log.gls8d)` informs us of the number of model
+coefficients as well as the type so that we can define the contrast
+matrix accordingly.
+
+```{r}
+# first we capture all the categorial variables in the variable group
+group <- df.sub$Site
+# Then we aggregate the different model coefficients by group
+group2 <- aggregate(model.matrix(m.log.gls8d,data=df.sub) ~ group, FUN=mean)
+rownames(group2) <- group2$group
+# we delete the first column
+(group2 <- group2[,-1])
+# for the numerical variable Precipitation we set the values in group2 to 1 
+# (more specific, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
+group2[(group2[,]>0)]<-1
+
+# now we can define the contrasts of interest
+contrasts <- as.matrix(rbind(group2["607",]-group2["608+619",],
+                             group2["607",]-group2["610",],
+                             group2["607",]-group2["612+627",],
+                             group2["607",]-group2["618+623",],
+                             group2["608+619",]-group2["610",],
+                             group2["608+619",]-group2["612+627",],
+                             group2["608+619",]-group2["618+623",],
+                             group2["610",]-group2["612+627",],
+                             group2["610",]-group2["618+623",],
+                             group2["612+627",]-group2["618+623",]))
+# the following row is optional
+row.names(contrasts)<- c("607-608+619","607-610","607-612+627","607-618+623","608+619-610","608+619-612+627","608+619-618+623","610-612+627","610-618+623","612+627-618+623")
+# Compute the test using glht
+test <- glht(m.log.gls8d, linfct = contrasts)
+
+# Summarize the test results
+summary(test)
+```
+
+Results from the contrasts show that not all treatments are
+significantly different. As such, we combine sites with the highest p
+value and lowest absolute z-value.
+
+```{r}
+df.sub$Site <- df.sub$Site
+levels(df.sub$Site)
+# combining 607 and 610
+levels(df.sub$Site) <- c("607+610","608+619","607+610","612+627","618+623","608+619","618+623","612+627")
+
+vf8 <- varComb(varIdent(form=~ 1 | Site),varExp(form=~lPrecipitation))
+m.log.gls8e <- gls(lRunoff ~ lPrecipitation+Site,
+             weights = vf8,
+          data = df.sub)
+
+summary(m.log.gls8e)
+anova(m.log.gls8d,m.log.gls8e)
+#anova(m.log.gls8d,m.log.gls8e, test="Chi")
+```
+
+From the summary, we see only precipitation is significant. None of the
+sites are significantly different from Site 607+610 (intercept). From
+the anova, we see the new model is not significantly worse.
+
+Next, we want to find out, if the other sites are significantly
+different from another. For that we need to define the contrasts.
+Running `coef(m.log.gls8e)` informs us of the number of model
+coefficients as well as the type so that we can define the contrast
+matrix accordingly.
+
+```{r}
+# first we capture all the categorial variables in the variable group
+group <- df.sub$Site
+# Then we aggregate the different model coefficients by group
+group2 <- aggregate(model.matrix(m.log.gls8e,data=df.sub) ~ group, FUN=mean)
+rownames(group2) <- group2$group
+# we delete the first column
+(group2 <- group2[,-1])
+# for the numerical variable Precipitation we set the values in group2 to 1 
+# (more specific, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
+group2[(group2[,]>0)]<-1
+
+# now we can define the contrasts of interest
+contrasts <- as.matrix(rbind(group2["607+610",]-group2["608+619",],
+                             group2["607+610",]-group2["612+627",],
+                             group2["607+610",]-group2["618+623",],
+                             group2["608+619",]-group2["612+627",],
+                             group2["608+619",]-group2["618+623",],
+                             group2["612+627",]-group2["618+623",]))
+# the following row is optional
+row.names(contrasts)<- c("607+610-608+619","607+610-612+627","607+610-618+623","608+619-612+627","608+619-618+623","612+627-618+623")
+# Compute the test using glht
+test <- glht(m.log.gls8e, linfct = contrasts)
+
+# Summarize the test results
+summary(test)
+```
+
+Results from the contrasts show that not all treatments are
+significantly different. As such, we combine sites with the highest p
+value and lowest absolute z-value.
+
+```{r}
+df.sub$Site <- df.sub$Site
+levels(df.sub$Site)
+# combining 607+610 and 618+623
+levels(df.sub$Site) <- c("607+610+618+623","608+619","607+610+618+623","612+627","607+610+618+623","608+619","607+610+618+623","612+627")
+
+vf8 <- varComb(varIdent(form=~ 1 | Site),varExp(form=~lPrecipitation))
+m.log.gls8f <- gls(lRunoff ~ lPrecipitation+Site,
+             weights = vf8,
+          data = df.sub)
+
+summary(m.log.gls8f)
+anova(m.log.gls8e,m.log.gls8f)
+#anova(m.log.gls8e,m.log.gls8f,test="Chi")
+```
+
+From the summary, we see precipitation is significant and sites
+"607+610+618+623" and 608+619" are significantly different. From the
+anova, we see the new model is not significantly worse.
+
+Next, we want to find out, if the other sites are significantly
+different from another. For that we need to define the contrasts.
+Running `coef(m.log.gls8f)` informs us of the number of model
+coefficients as well as the type so that we can define the contrast
+matrix accordingly.
+
+```{r}
+# first we capture all the categorial variables in the variable group
+group <- df.sub$Site
+# Then we aggregate the different model coefficients by group
+group2 <- aggregate(model.matrix(m.log.gls8f,data=df.sub) ~ group, FUN=mean)
+rownames(group2) <- group2$group
+# we delete the first column
+(group2 <- group2[,-1])
+# for the numerical variable Precipitation we set the values in group2 to 1 
+# (more specific, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
+group2[(group2[,]>0)]<-1
+
+# now we can define the contrasts of interest
+contrasts <- as.matrix(rbind(group2["607+610+618+623",]-group2["608+619",],
+                             group2["607+610+618+623",]-group2["612+627",],
+                             group2["608+619",]-group2["612+627",]))
+# the following row is optional
+row.names(contrasts)<- c("607+610+618+623-608+619","607+610+618+623-612+627","608+619-612+627")
+# Compute the test using glht
+test <- glht(m.log.gls8f, linfct = contrasts)
+
+# Summarize the test results
+summary(test)
+```
+
+Results from the contrasts show that not all treatments are
+significantly different. As such, we combine sites with the highest p
+value and lowest absolute z-value.
+
+```{r}
+df.sub$Site <- df.sub$Site
+levels(df.sub$Site)
+# combining 607+610+618+623 and 612+627
+levels(df.sub$Site) <- c("607+610+618+623+612+627","608+619","607+610+618+623+612+627","607+610+618+623+612+627","607+610+618+623+612+627","608+619","607+610+618+623+612+627","607+610+618+623+612+627")
+
+vf8 <- varComb(varIdent(form=~ 1 | Site),varExp(form=~lPrecipitation))
+m.log.gls8g <- gls(lRunoff ~ lPrecipitation+Site,
+             weights = vf8,
+          data = df.sub)
+
+summary(m.log.gls8g)
+anova(m.log.gls8f,m.log.gls8g)
+#anova(m.log.gls8f,m.log.gls8g,test="Chi")
+```
+
+From the summary, we see precipitation and the combined sites are
+significant. From the anova, we see the new model is not significantly
+worse.
+
+607 = CompostNoTopdressing
+
+610 = CompostNoTopdressing
+
+612 = TillTopdressing
+
+618 = CompostTopdressing
+
+623 = ControlTopdressing
+
+627 = ControlNoTopdressing
+
+\-\-\-\--
+
+608 = TillNoTopdressing
+
+619 = ControlTopdressing
+
+NOTE: 607 & 610 (Compost no topdressing) have the same drainage area
+with two collection locations. 619 & 623 (Control topdressing) have the
+same drainage area with two collection locations.
+
+We compare the AIC of each model summary. The new model, m.log.gls.8g,
+results in a lower AIC of 301.
+
+We accept m.log.gls8g as the best model. The analysis resulted in two
+groupings, but the groupings don't break out into treatment effects.
+Additionally, the soil management technique and top dressing could be
+broken out into two variables.
+
+### Binomial Modeling using GLM
+
+We call Site Treatment from now on:
+
+```{r}
+df.sub <- subset(runoff.glm,Source=="RadovanovicBean2022")
+names(df.sub)[names(df.sub)=="Site"]  <- "Treatment"
+# recode the site factor levels
+df.sub$Treatment<-factor(df.sub$Treatment)
+```
+
+For the binomial modeling we use a binomial response variable as we are
+only interested, if a storm (precipitation depth) has resulted in runoff
+(binary.runoff==1) or not (binary.runoff==0). First, we determine the
+best log-link. We test logit (the default), probit, and cloglog.
+
+```{r}
+m.glm.1a <- glm(binary.runoff ~ lPrecipitation*Treatment,
+          data = df.sub,
+          family = binomial(link="logit"))
+anova(m.glm.1a,test="Chi")
+
+m.glm.1b <- glm(binary.runoff ~ lPrecipitation*Treatment,
+          data = df.sub,
+          family = binomial(link="probit"))
+summary(m.glm.1b)
+anova(m.glm.1a,m.glm.1b,test="Chi")
+
+m.glm.1c <- glm(binary.runoff ~ lPrecipitation*Treatment,
+            data = df.sub,
+            family = binomial(link="cloglog"))
+summary(m.glm.1c)
+anova(m.glm.1a,m.glm.1b,m.glm.1c,test="Chi")
+```
+
+The residual deviation is slightly lower for the logit so we use the
+logit link. Now we simplify the model to only include significant
+variables.
+
+```{r}
+drop1(m.glm.1a,test="Chi")
+
+#drop1 indicates the interaction between preciptation and treatment is not significant. We remove this interaction. 
+
+m.glm.2 <- glm(binary.runoff ~ lPrecipitation+Treatment,
+          data = df.sub,
+          family = binomial(link="logit"))
+summary(m.glm.2)
+```
+
+Let's test if the model has become significantly 'worse':
+
+```{r}
+
+anova(m.glm.1a,m.glm.2, test="Chi")
+```
+
+That is not the case, so we accept m.glm.2 as the best model. From
+summary(m.glm.2) we know that none of the treatments are significantly
+different from 607. Let's test (contrast), if the others are
+significantly different from one another.
+
+```{r}
+# first we extract the categorial variables
+group <- df.sub$Treatment
+# Then we aggregate the different model coefficients by group
+group2 <- aggregate(model.matrix(m.glm.2,data=df.sub) ~ group, FUN=mean)
+rownames(group2) <- group2$group
+# we delete the first column
+(group2 <- group2[,-1])
+# for the numerical variable Precipitation we set the values in group2 to 1 
+# (more specifiv, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
+group2[(group2[,]>0)]<-1
+
+# now we can define the contrasts of interest
+contrasts <- as.matrix(rbind(group2["607",]-group2["608",],
+                             group2["607",]-group2["610",],
+                             group2["607",]-group2["612",],
+                             group2["607",]-group2["618",],
+                             group2["607",]-group2["619",],
+                             group2["607",]-group2["623",],
+                             group2["607",]-group2["627",],
+                             group2["608",]-group2["610",],
+                             group2["608",]-group2["612",],
+                             group2["608",]-group2["618",],
+                             group2["608",]-group2["619",],
+                             group2["608",]-group2["623",],
+                             group2["608",]-group2["627",],
+                             group2["610",]-group2["612",],
+                             group2["610",]-group2["618",],
+                             group2["610",]-group2["619",],
+                             group2["610",]-group2["623",],
+                             group2["610",]-group2["627",],
+                             group2["612",]-group2["618",],
+                             group2["612",]-group2["619",],
+                             group2["612",]-group2["623",],
+                             group2["612",]-group2["627",],
+                             group2["618",]-group2["619",],
+                             group2["618",]-group2["623",],
+                             group2["618",]-group2["627",],
+                             group2["619",]-group2["623",],
+                             group2["619",]-group2["627",],
+                             group2["623",]-group2["627",]))
+# the following row is optional
+row.names(contrasts)<- c("607-608","607-610","607-612","607-618","607-619","607-623","607-627","608-610","608-612","608-618","608-619","608-623","608-627","610-612","610-618","610-619","610-623","610-627","612-618","612-619","612-623","612-627","618-619","618-623","618-627","619-623","619-627","623-627")
+
+# Compute the test using glht
+test <- glht(m.glm.2, linfct = contrasts)
+
+# Summarize the test results
+summary(test)
+```
+
+Results from the contrasts show that none of the treatments are
+significantly different. As such, we combine sites with the highest p
+value and lowest absolute z-value.
+
+```{r}
+df.sub$Treatment <- df.sub$Treatment
+levels(df.sub$Treatment)
+# combining 618 and 623
+levels(df.sub$Treatment) <- c("607","608","610","612","618+623","619","618+623","627")
+
+m.glm.2a <- glm(binary.runoff ~ lPrecipitation+Treatment,
+          data = df.sub,
+          family = binomial(link="logit"))
+summary(m.glm.2a)
+
+anova(m.glm.2,m.glm.2a, test="Chi")
+
+```
+
+From the summary, we see only precipitation is significant. None of the
+Treatment are significantly different from treatment 607 (intercept).
+From the anova, we see the new model is not significantly worse.
+
+Next, we want to find out, if the other sites are significantly
+different from another. For that we need to define the contrasts.
+Running `coef(m.glm.2a)` informs us of the number of model coefficients
+as well as the type so that we can define the contrast matrix
+accordingly.
+
+```{r}
+# first we extract the categorial variables
+group <- df.sub$Treatment
+# Then we aggregate the different model coefficients by group
+group2 <- aggregate(model.matrix(m.glm.2a,data=df.sub) ~ group, FUN=mean)
+rownames(group2) <- group2$group
+# we delete the first column
+(group2 <- group2[,-1])
+# for the numerical variable Precipitation we set the values in group2 to 1 
+# (more specific, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
+group2[(group2[,]>0)]<-1
+
+# now we can define the contrasts of interest
+contrasts <- as.matrix(rbind(group2["607",]-group2["608",],
+                             group2["607",]-group2["610",],
+                             group2["607",]-group2["612",],
+                             group2["607",]-group2["618+623",],
+                             group2["607",]-group2["619",],
+                             group2["607",]-group2["627",],
+                             group2["608",]-group2["610",],
+                             group2["608",]-group2["612",],
+                             group2["608",]-group2["618+623",],
+                             group2["608",]-group2["619",],
+                             group2["608",]-group2["627",],
+                             group2["610",]-group2["612",],
+                             group2["610",]-group2["618+623",],
+                             group2["610",]-group2["619",],
+                             group2["610",]-group2["627",],
+                             group2["612",]-group2["618+623",],
+                             group2["612",]-group2["619",],
+                             group2["612",]-group2["627",],
+                             group2["618+623",]-group2["619",],
+                             group2["618+623",]-group2["627",],
+                             group2["619",]-group2["627",]))
+# the following row is optional
+row.names(contrasts)<- c("607-608","607-610","607-612","607-618+623","607-619","607-627","608-610","608-612","608-618+623","608-619","608-627","610-612","610-618+623","610-619","610-627","612-618+623","612-619","612-627","618+623-619","618-627","619-627")
+
+# Compute the test using glht
+test <- glht(m.glm.2a, linfct = contrasts)
+
+# Summarize the test results
+summary(test)
+```
+
+Results from the contrasts show that none of the treatments are
+significantly different. As such, we combine sites with the highest p
+value and lowest absolute z-value.
+
+```{r}
+df.sub$Treatment <- df.sub$Treatment
+levels(df.sub$Treatment)
+# combining 612 and 618+623
+
+levels(df.sub$Treatment) <- c("607","608","610","612+618+623","612+618+623","619","627")
+
+m.glm.2b <- glm(binary.runoff ~ lPrecipitation+Treatment,
+          data = df.sub,
+          family = binomial(link="logit"))
+summary(m.glm.2b)
+
+anova(m.glm.2a,m.glm.2b, test="Chi")
+
+```
+
+From the summary, we see only precipitation is significant. None of the
+treatments are significantly different from Site 607 (intercept). From
+the anova, we see the new model is not significantly worse.
+
+Next, we want to find out, if the other sites are significantly
+different from another. For that we need to define the contrasts.
+Running `coef(m.glm.2b)` informs us of the number of model coefficients
+as well as the type so that we can define the contrast matrix
+accordingly.
+
+```{r}
+# first we extract the categorial variables
+group <- df.sub$Treatment
+# Then we aggregate the different model coefficients by group
+group2 <- aggregate(model.matrix(m.glm.2b,data=df.sub) ~ group, FUN=mean)
+rownames(group2) <- group2$group
+# we delete the first column
+(group2 <- group2[,-1])
+# for the numerical variable Precipitation we set the values in group2 to 1 
+# (more specifiv, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
+group2[(group2[,]>0)]<-1
+
+# now we can define the contrasts of interest
+contrasts <- as.matrix(rbind(group2["607",]-group2["608",],
+                             group2["607",]-group2["610",],
+                             group2["607",]-group2["612+618+623",],
+                             group2["607",]-group2["619",],
+                             group2["607",]-group2["627",],
+                             group2["608",]-group2["610",],
+                             group2["608",]-group2["612+618+623",],
+                             group2["608",]-group2["619",],
+                             group2["608",]-group2["627",],
+                             group2["610",]-group2["612+618+623",],
+                             group2["610",]-group2["619",],
+                             group2["610",]-group2["627",],
+                             group2["612+618+623",]-group2["619",],
+                             group2["612+618+623",]-group2["627",],
+                             group2["619",]-group2["627",]))
+# the following row is optional
+row.names(contrasts)<- c("607-608","607-610","607-612+618+623","607-619","607-627","608-610","608-612+618+623","608-619","608-627","610-612+618+623","610-619","610-627","612+618+623-619","612+618+623-627","619-627")
+
+# Compute the test using glht
+test <- glht(m.glm.2b, linfct = contrasts)
+
+# Summarize the test results
+summary(test)
+```
+
+Results from the contrasts show that none of the treatments are
+significantly different. As such, we combine sites with the highest p
+value and lowest absolute z-value.
+
+```{r}
+df.sub$Treatment <- df.sub$Treatment
+levels(df.sub$Treatment)
+# combining 610 and 612+618+623
+levels(df.sub$Treatment) <- c("607","608","610+612+618+623","610+612+618+623","619","627")
+
+m.glm.2c <- glm(binary.runoff ~ lPrecipitation+Treatment,
+          data = df.sub,
+          family = binomial(link="logit"))
+summary(m.glm.2c)
+
+anova(m.glm.2b,m.glm.2c, test="Chi")
+
+```
+
+From the summary, we see only precipitation is significant. None of the
+treatments are significantly different from Site 607 (intercept). From
+the anova, we see the new model is not significantly worse.
+
+Next, we want to find out, if the other sites are significantly
+different from another. For that we need to define the contrasts.
+Running `coef(m.glm.2c)` informs us of the number of model coefficients
+as well as the type so that we can define the contrast matrix
+accordingly.
+
+```{r}
+# first we extract the categorial variables
+group <- df.sub$Treatment
+# Then we aggregate the different model coefficients by group
+group2 <- aggregate(model.matrix(m.glm.2c,data=df.sub) ~ group, FUN=mean)
+rownames(group2) <- group2$group
+# we delete the first column
+(group2 <- group2[,-1])
+# for the numerical variable Precipitation we set the values in group2 to 1 
+# (more specifiv, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
+group2[(group2[,]>0)]<-1
+
+# now we can define the contrasts of interest
+contrasts <- as.matrix(rbind(group2["607",]-group2["608",],
+                             group2["607",]-group2["610+612+618+623",],
+                             group2["607",]-group2["619",],
+                             group2["607",]-group2["627",],
+                             group2["608",]-group2["610+612+618+623",],
+                             group2["608",]-group2["619",],
+                             group2["608",]-group2["627",],
+                             group2["610+612+618+623",]-group2["619",],
+                             group2["610+612+618+623",]-group2["627",],
+                             group2["619",]-group2["627",]))
+# the following row is optional
+row.names(contrasts)<- c("607-608","607-610+612+618+623","607-619","607-627","608-610+612+618+623","608-619","608-627","610+612+618+623-619","610+612+618+623-627","619-627")
+
+# Compute the test using glht
+test <- glht(m.glm.2c, linfct = contrasts)
+
+# Summarize the test results
+summary(test)
+```
+
+Results from the contrasts show that none of the treatments are
+significantly different. As such, we combine sites with the highest p
+value and lowest absolute z-value. Next, we combine 607 and 619.
+
+```{r}
+df.sub$Treatment <- df.sub$Treatment
+levels(df.sub$Treatment)
+# combining 607 and 619
+levels(df.sub$Treatment) <- c("607+619","608","610+612+618+623","607+619","627")
+
+m.glm.2d <- glm(binary.runoff ~ lPrecipitation+Treatment,
+          data = df.sub,
+          family = binomial(link="logit"))
+summary(m.glm.2d)
+
+anova(m.glm.2c,m.glm.2d, test="Chi")
+
+```
+
+From the summary, we see only precipitation is significant. None of the
+treatments are significantly different from treatments 607+619
+(intercept). From the anova, we see the new model is not significantly
+worse.
+
+Next, we want to find out, if the other sites are significantly
+different from another. For that we need to define the contrasts.
+Running `coef(m.glm.2d)` informs us of the number of model coefficients
+as well as the type so that we can define the contrast matrix
+accordingly.
+
+```{r}
+# first we extract the categorial variables
+group <- df.sub$Treatment
+# Then we aggregate the different model coefficients by group
+group2 <- aggregate(model.matrix(m.glm.2d,data=df.sub) ~ group, FUN=mean)
+rownames(group2) <- group2$group
+# we delete the first column
+(group2 <- group2[,-1])
+# for the numerical variable Precipitation we set the values in group2 to 1 
+# (more specifiv, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
+group2[(group2[,]>0)]<-1
+
+# now we can define the contrasts of interest
+contrasts <- as.matrix(rbind(group2["607+619",]-group2["608",],
+                             group2["607+619",]-group2["610+612+618+623",],
+                             group2["607+619",]-group2["627",],
+                             group2["608",]-group2["610+612+618+623",],
+                             group2["608",]-group2["627",],
+                             group2["610+612+618+623",]-group2["627",]))
+# the following row is optional
+row.names(contrasts)<- c("607+619-608","607+619-610+612+618+623","607-627","608-610+612+618+623","608-627","610+612+618+623-627")
+
+# Compute the test using glht
+test <- glht(m.glm.2d, linfct = contrasts)
+
+# Summarize the test results
+summary(test)
+```
+
+Results from the contrasts show that none of the treatments are
+significantly different. As such, we combine sites with the highest p
+value and lowest absolute z-value.
+
+```{r}
+df.sub$Treatment <- df.sub$Treatment
+levels(df.sub$Treatment)
+# combining 610+612+618+623 and 627
+levels(df.sub$Treatment) <- c("607+619","608","610+612+618+623+627","610+612+618+623+627")
+
+m.glm.2e <- glm(binary.runoff ~ lPrecipitation+Treatment,
+          data = df.sub,
+          family = binomial(link="logit"))
+summary(m.glm.2e)
+
+anova(m.glm.2d,m.glm.2e, test="Chi")
+
+```
+
+From the summary, we see only precipitation is significant. None of the
+treatments are significantly different from treatments 607+619
+(intercept). From the anova, we see the new model is not significantly
+worse.
+
+Next, we want to find out, if the other sites are significantly
+different from another. For that we need to define the contrasts.
+Running `coef(m.glm.2e)` informs us of the number of model coefficients
+as well as the type so that we can define the contrast matrix
+accordingly.
+
+```{r}
+# first we extract the categorial variables
+group <- df.sub$Treatment
+# Then we aggregate the different model coefficients by group
+group2 <- aggregate(model.matrix(m.glm.2e,data=df.sub) ~ group, FUN=mean)
+rownames(group2) <- group2$group
+# we delete the first column
+(group2 <- group2[,-1])
+# for the numerical variable Precipitation we set the values in group2 to 1 
+# (more specific, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
+group2[(group2[,]>0)]<-1
+
+# now we can define the contrasts of interest
+contrasts <- as.matrix(rbind(group2["607+619",]-group2["608",],
+                             group2["607+619",]-group2["610+612+618+623+627",],
+                             group2["608",]-group2["610+612+618+623+627",]))
+# the following row is optional
+row.names(contrasts)<- c("607+619-608","607+619-610+612+618+623+627","608-610+612+618+623+627")
+
+# Compute the test using glht
+test <- glht(m.glm.2e, linfct = contrasts)
+
+# Summarize the test results
+summary(test)
+```
+
+Results from the contrasts show that none of the treatments are
+significantly different. As such, we combine sites with the highest p
+value and lowest absolute z-value.
+
+```{r}
+df.sub$Treatment <- df.sub$Treatment
+levels(df.sub$Treatment)
+# combining 607+608+619
+levels(df.sub$Treatment) <- c("607+608+619","607+608+619","610+612+618+623+627")
+
+m.glm.2f <- glm(binary.runoff ~ lPrecipitation+Treatment,
+          data = df.sub,
+          family = binomial(link="logit"))
+summary(m.glm.2f)
+
+anova(m.glm.2e,m.glm.2f, test="Chi")
+
+```
+
+From the summary, we see precipitation and treatment are now
+significant. From the anova, we see the new model is not significantly
+worse, so we accept m.glm.2f as the best model.
+
+607 = CompostNoTopdressing
+
+608 = TillNoTopdressing
+
+619 = ControlTopdressing
+
+\-\--
+
+610 = CompostNoTopdressing
+
+612 = TillTopdressing
+
+618 = CompostTopdressing
+
+623 = ControlTopdressing
+
+627 = ControlNoTopdressing
+
+Finally, we compute the predicted values:
+
+```{r}
+df.pred <- expand.grid(lPrecipitation=seq(min(df.sub$lPrecipitation)-2,max(df.sub$lPrecipitation)+1+0.1,length.out=100),
+                       Treatment=unique(df.sub$Treatment))
+df.pred$runoff.pred <-predict(m.glm.2f,df.pred,type="response")
+df.pred$Precipitation<-10^df.pred$lPrecipitation
+```
+
+We plot the data, together with the threshold values of the original
+linear model (m.lm.bs). This information is stored on the data frame
+`m.lm.bs`.
+
+```{r}
+# extract thresholds first for better readability.
+th.1 <- m.lm.bs[( m.lm.bs$Treatment=="607"),]$threshold
+th.2 <- m.lm.bs[( m.lm.bs$Treatment=="608"),]$threshold
+th.3 <- m.lm.bs[( m.lm.bs$Treatment=="610"),]$threshold
+th.4 <- m.lm.bs[( m.lm.bs$Treatment=="612"),]$threshold
+th.5 <- m.lm.bs[( m.lm.bs$Treatment=="618"),]$threshold
+th.6 <- m.lm.bs[( m.lm.bs$Treatment=="619"),]$threshold
+th.7 <- m.lm.bs[( m.lm.bs$Treatment=="623"),]$threshold
+th.8 <- m.lm.bs[( m.lm.bs$Treatment=="627"),]$threshold
+
+
+ggplot(df.pred,aes(x=Precipitation,y=runoff.pred))+
+  geom_line(aes(color=Treatment))+xlab("Precipitation [mm]")+theme_gray()+
+  ylab("Runoff Probability [-]")+theme(legend.position = "top")+
+  ggtitle("Radovanovic and Bean (2022) - Logit link with log-transformed precipitation")+
+  geom_jitter(df.sub,mapping=aes(x=Precipitation, y=binary.runoff,color=Treatment),
+              width=0, height=0.02)+
+  geom_hline(yintercept=0.90, linetype="dashed", color="black")+ 
+  geom_hline(yintercept=0.10, linetype="dashed", color="black")+
+  geom_vline(xintercept=th.1, linetype="dotted", color="red")+ # plot 607 threshold
+  geom_vline(xintercept=th.2, linetype="dotted", color="green")+ # plot 608 threshold
+  geom_vline(xintercept=th.3, linetype="dotted", color="blue")+ # plot 610 threshold
+geom_vline(xintercept=th.4, linetype="dotted", color="purple")+ # plot 612 threshold
+  geom_vline(xintercept=th.5, linetype="dotted", color="yellow")+ # plot 618 threshold
+geom_vline(xintercept=th.6, linetype="dotted", color="orange")+ # plot 619 threshold
+geom_vline(xintercept=th.7, linetype="dotted", color="deeppink")+ # plot 623 threshold
+geom_vline(xintercept=th.8, linetype="dotted", color="steelblue") # plot 627 threshold
+```
+
+We use the probabilities of 10% and 90% to determine precipitation
+depths which do not result low chance of runoff (p\<0.1), high chance of
+runoff (p\>0.9) and transitioning (0.1 \< p \< 0.9). This data is
+extracted from the data frame of predicted values `df.pred`. We are
+adding this information as new columns p10 and p90 to the already
+existing results data.frame. For iterations, we use the already defined
+variable factor.levels.
+
+### Probability Calculation
+
+```{r}
+results.bs$probability<-0
+results$p10<-0
+results$p90<-0
+results$p.m.lm<-0
+results$p.m.gls<-0
+results$p.m.log.lm<-0
+results$p.m.log.gls<-0
+threshold <-
+  data.frame(
+    Treatment = character(),
+    Method = character(),
+    threshold = numeric(),
+    runoff.prob = numeric()
+  )
+for (i in 1:length(factor.levels)){
+  runoff.pred.sub <- df.pred[grep(factor.levels[i],df.pred$Treatment),]
+  temp <- approx(runoff.pred.sub$runoff.pred,runoff.pred.sub$Precipitation,0.1)[[2]]
+  temp <- round(temp,1)
+  results[(results$Treatment==factor.levels[i]),]$p10<-temp
+   temp <- approx(runoff.pred.sub$runoff.pred,runoff.pred.sub$Precipitation,0.9)[[2]]
+  temp <- round(temp,1)
+  results[(results$Treatment==factor.levels[i]),]$p90<-temp
+    ## extract p values for the thresholds
+  ### m.lm
+  th.temp<-m.lm.bs[m.lm.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="LR",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.lm<-temp
+    ### m.gls
+  th.temp<-m.gls.bs[m.gls.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="LR+ME",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.gls<-temp
+    ### m.log.lm
+  th.temp<-10^m.log.lm.bs[m.log.lm.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="log(LR)",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.log.lm<-temp
+    ### m.log.gls
+  th.temp<-10^m.log.gls.bs[m.log.gls.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="log(LR)+ME",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.log.gls<-temp
+    ##########################
+  #### now extract values for the results.bs
+  prec.depth<-results.bs[grep(factor.levels[i],results.bs$Treatment),]$prec.depth
+  temp <- round(approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,prec.depth,rule=2)[[2]],3)
+  results.bs[grep(factor.levels[i],results.bs$Treatment),]$probability<-temp
+}
+
+```
+
+```{r}
+results.Radovanovic2022<- results
+results.bs.Radovanovic2022<- results.bs
+```
+
+Write the data necessary for plotting into an rda file
+
+```{r}
+save(df.pred,df.sub,results.bs,threshold,file="PlottingData_Radovanovic2022.rda")
+```
+
+This concludes the analysis for this data set.
+
+## Wang 2022
+
+We subset the data to only contain observations from this paper and we
+recode the factor Site to reduce the factor levels to the actual levels
+of this paper.
+
+```{r}
+Source<-"Wang2022"
+df.sub <- subset(runoff.gls,Source=="Wang2022")
+df.sub$Site<-factor(df.sub$Site)
+
+levels(df.sub$Site)
+
+# combining all similar plots:
+# walnut plots: 1, 5, 9  
+# grass plots: 2, 7, 12 
+# shrubs plots: 3, 8, 11 and 
+# corn: 4, 6, 10
+
+levels(df.sub$Site) <- c("Walnut","Corn","Shrubs","Grass","Grass","Shrubs", "Corn","Walnut","Corn","Grass","Shrubs","Walnut")
+```
+
+### Linear Models with random effects
+
+#### Linear (original) data
+
+We start with a standard linear model but using the gls command so we
+can compare this model to the mixed-effect models later.
+
+```{r}
+m.lm <- gls(Runoff ~ Precipitation*Site,
+          data = df.sub)
+summary(m.lm)
+```
+
+Now we create a model with fixed variance structure.
+
+```{r}
+vf1Fixed <- varFixed(~Precipitation)
+m.gls1 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf1Fixed,
+          data = df.sub)
+summary(m.gls1)
+anova(m.lm,m.gls1)
+```
+
+The model with the fixed variance structure is a better fit for the data
+(AIC is less). Let's plot the residuals of both models.
+
+```{r}
+par(mfrow=c(1,2))
+plot(df.sub$Precipitation,residuals(m.lm),ylim=c(-4,10),col=df.sub$Site)
+plot(df.sub$Precipitation,residuals(m.gls1,type = "normalized"),ylim=c(-4,10),col=df.sub$Site)
+```
+
+Next we apply the VarIdent Variance Structure
+
+```{r}
+vf2 <- varIdent(~1 | Site)
+m.gls2 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf2,
+          data = df.sub)
+summary(m.gls2)
+anova(m.lm,m.gls1,m.gls2)
+```
+
+Now the VarPower structure:
+
+```{r}
+vf3 <- varPower(form=~Precipitation)
+m.gls3 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf3,
+          data = df.sub)
+summary(m.gls3)
+anova(m.lm,m.gls1,m.gls2,m.gls3)
+vf4 <- varPower(form=~Precipitation|Site)
+m.gls4 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf4,
+          data = df.sub)
+summary(m.gls4)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4)
+```
+
+Now the VarExp structure:
+
+```{r}
+vf5 <- varExp(form=~Precipitation)
+m.gls5 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf5,
+          data = df.sub)
+summary(m.gls5)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5)
+```
+
+The VarConstPower structure:
+
+```{r}
+vf6 <- varConstPower(form=~Precipitation)
+m.gls6 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf6,
+          data = df.sub)
+summary(m.gls6)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5,m.gls6)
+vf7 <- varConstPower(form=~Precipitation|Site)
+m.gls7 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf7,
+          data = df.sub)
+summary(m.gls7)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5,m.gls6,m.gls7)
+```
+
+Finally, the varComb structure:
+
+```{r}
+vf8 <- varComb(varIdent(form=~ 1 | Site),varExp(form=~Precipitation))
+m.gls8 <- gls(Runoff ~ Precipitation*Site,
+             weights = vf8,
+          data = df.sub)
+summary(m.gls8)
+anova(m.lm,m.gls1,m.gls2,m.gls3,m.gls4,m.gls5,m.gls6,m.gls7,m.gls8)
+```
+
+Let's plot the residuals of the initial and the best model
+
+```{r}
+par(mfrow=c(1,2))
+plot(df.sub$Precipitation,residuals(m.lm),ylim=c(-4,10),col=df.sub$Site)
+plot(df.sub$Precipitation,residuals(m.gls7,type = "normalized"),ylim=c(-4,10),col=df.sub$Site)
+```
+
+```{r}
+E1 <- resid(m.gls7,type = "normalized")
+coplot(E1~ Precipitation|Site,data=df.sub)
+```
+
+#### Log-10 transformed data
+
+In the next step, we perform the same analysis as above, however, we use
+the log-10 transformed data for precipitation and runoff. All analysis
+is concentrated into one chunk.
+
+```{r}
+m.log.lm <- gls(lRunoff ~ lPrecipitation*Site,
+          data = df.sub)
+vf1Fixed <- varFixed(~lPrecipitation)
+m.log.gls1 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf1Fixed,
+          data = df.sub)
+vf2 <- varIdent(~1 | Site)
+m.log.gls2 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf2,
+          data = df.sub)
+vf3 <- varPower(form=~lPrecipitation)
+m.log.gls3 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf3,
+          data = df.sub)
+vf4 <- varPower(form=~lPrecipitation|Site)
+m.log.gls4 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf4,
+          data = df.sub)
+vf5 <- varExp(form=~lPrecipitation)
+m.log.gls5 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf5,
+          data = df.sub)
+vf6 <- varConstPower(form=~lPrecipitation)
+m.log.gls6 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf6,
+          data = df.sub)
+vf7 <- varConstPower(form=~lPrecipitation|Site)
+m.log.gls7 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf7,
+          data = df.sub)
+vf8 <- varComb(varIdent(form=~ 1 | Site),varExp(form=~lPrecipitation))
+m.log.gls8 <- gls(lRunoff ~ lPrecipitation*Site,
+             weights = vf8,
+          data = df.sub)
+```
+
+Now we find out which has the lowest AIC
+
+```{r}
+anova(m.log.lm,m.log.gls1,m.log.gls2,m.log.gls3,m.log.gls4,m.log.gls5,m.log.gls6,m.log.gls7,m.log.gls8)
+```
+
+The gls7 model results in the lowest AIC. Let's plot the residuals of
+the two models, lm and gls7:
+
+```{r}
+par(mfrow=c(1,2))
+plot(df.sub$Precipitation,residuals(m.log.lm),ylim=c(-4,4),col=df.sub$Site)
+plot(df.sub$Precipitation,residuals(m.log.gls7,type = "normalized"),ylim=c(-4,4),col=df.sub$Site)
+```
+
+#### Results interpretation gls
+
+There are now four models for further interpretation and comparison:
+
+1.  the original linear model (m.lm)
+
+2.  the linear model with the improved variance structure (m.gls7)
+
+3.  the log-transformed linear model (m.log.lm)
+
+4.  the log-transformed model with the improved variance structure
+    (m.log.gls7)
+
+For each model we compute the threshold and the threshold confidence
+interval. Then we perform the Breusch-Pagan test to see if the residual
+structure has improved. Finally, we contrast the treatments to see which
+are significantly different from each other at the $\alpha=0.05$.
+
+**Computing a results table**
+
+We start with creating an empty table that will be populated with
+results from the four models:
+
+```{r}
+  factor.levels<-rownames(m.lm$contrasts$Site)
+  # create output data frame
+   results <- CreateResultsTable("Wang2022",factor.levels)
+```
+
+Now perform boot strapping for all four models
+
+```{r}
+m.lm.bs <- BootstrappingGLS(m.lm,n.bs,df.sub,log.trans=F)
+m.gls.bs <- BootstrappingGLS(m.gls7,n.bs,df.sub,log.trans=F)
+m.log.lm.bs <- BootstrappingGLS(m.log.lm,n.bs,df.sub,log.trans=T)
+m.log.gls.bs <- BootstrappingGLS(m.log.gls7,n.bs,df.sub,log.trans=T)
+m.lm.bs$Method<-"ANCOVA"
+m.gls.bs$Method<-"ANCOVA+RE"
+m.log.lm.bs$Method<-"log-ANCOVA"
+m.log.gls.bs$Method<-"log-ANCOVA+RE"
+```
+
+Combine this information into one data.frame for later processing
+
+```{r}
+results.bs<-rbind(m.lm.bs,m.gls.bs,m.log.lm.bs,m.log.gls.bs)
+results.bs$nbth<-NULL
+results.bs$nath<-NULL
+results.bs <- melt(results.bs, id=c("Treatment", "Method"),value.name="prec.depth")
+# re-log transform data
+temp<- results.bs[grep("log",results.bs$Method),]$prec.depth
+results.bs[grep("log",results.bs$Method),]$prec.depth<-10^temp
+results.bs$Author <- Source
+```
+
+Now we populate the results table with the boot strapping data:
+
+```{r}
+#results$lm<-FormatBS(m.lm.bs$threshold,m.lm.bs$CI_low,m.lm.bs$CI_high)
+#results$gls<-FormatBS(m.gls.bs$threshold,m.gls.bs$CI_low,m.gls.bs$CI_high)
+# now the log-transformed data
+#results$log10.lm<-FormatBS(10^m.log.lm.bs$threshold,10^m.log.lm.bs$CI_low,10^m.log.lm.bs$CI_high)
+#results$log10.gls<-FormatBS(10^m.log.gls.bs$threshold,10^m.log.gls.bs$CI_low,10^m.log.gls.bs$CI_high)
+
+
+
+results$lm<-FormatBS(m.lm.bs$threshold,m.lm.bs$CI_low,m.lm.bs$CI_high)
+results$lm_nbth <- m.lm.bs$nbth
+results$lm_nath <- m.lm.bs$nath
+results$gls<-FormatBS(m.gls.bs$threshold,m.gls.bs$CI_low,m.gls.bs$CI_high)
+results$gls_nbth <- m.gls.bs$nbth
+results$gls_nath <- m.gls.bs$nath
+# now the log-transformed data
+results$log10.lm<-FormatBS(10^m.log.lm.bs$threshold,10^m.log.lm.bs$CI_low,10^m.log.lm.bs$CI_high)
+results$log10.lm_nbth <- m.log.lm.bs$nbth
+results$log10.lm_nath <- m.log.lm.bs$nath
+results$log10.gls<-FormatBS(10^m.log.gls.bs$threshold,10^m.log.gls.bs$CI_low,10^m.log.gls.bs$CI_high)
+results$log10.gls_nbth <- m.log.gls.bs$nbth
+results$log10.gls_nath <- m.log.gls.bs$nath
+```
+
+Finally, add a line with the Breusch-Pagan test against
+heteroskedasticity
+
+```{r}
+results[nrow(results) + 1,] = c(results$Article[1],"BP-test",format(round(PerformBS(m.lm),2),nsmall=2),
+                                NA,
+                                NA,
+                                format(round(PerformBS(m.gls7),2),nsmall=2),
+                                NA,
+                                NA,
+                                format(round(PerformBS(m.log.lm),2),nsmall=2),
+                                NA,
+                                NA,
+                                format(round(PerformBS(m.log.gls7),2),nsmall=2),
+                                NA,
+                                NA)
+```
+
+**Contrasting**
+
+For the gls models, we further investigate which treatments are
+significantly different from each other but only on the **best** model
+so far. We use the AIC to determine the best model (note, the response
+variable is different for the linear and the log-transformed models.
+Therefore they cannot be used in the same anova command):
+
+```{r}
+anova(m.lm,m.gls7)
+anova(m.log.lm,m.log.gls7)
+```
+
+The m.gls7 model has the lowest AIC of 475. The summary of that model
+reveals:
+
+```{r}
+summary(m.gls7)
+```
+
+All parameters are NOT significant. We remove the interaction.
+
+```{r}
+vf7 <- varConstPower(form=~Precipitation|Site)
+m.gls7a <- gls(Runoff ~ Precipitation+Site,
+             weights = vf7,
+          data = df.sub)
+summary(m.gls7a)
+anova(m.gls7,m.gls7a)
+```
+
+All parameters are NOT significant. Only shrubs and grass sites are
+significantly different from walnut sites (intercept). The AIC has
+improved as well, indicating gls7a is a better model.
+
+Next, we want to find out, if the other sites are significantly
+different from another. For that we need to define the contrasts.
+Running `coef(m.gls7a)` informs us of the number of model coefficients
+as well as the type so that we can define the contrast matrix
+accordingly.
+
+```{r}
+# first we capture all the categorial variables in the variable group
+group <- df.sub$Site
+# Then we aggregate the different model coefficients by group
+group2 <- aggregate(model.matrix(m.gls7a,data=df.sub) ~ group, FUN=mean)
+rownames(group2) <- group2$group
+# we delete the first column
+(group2 <- group2[,-1])
+# for the numerical variable Precipitation we set the values in group2 to 1 
+# (more specific, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
+group2[(group2[,]>0)]<-1
+
+# now we can define the contrasts of interest
+contrasts <- as.matrix(rbind(group2["Walnut",]-group2["Corn",],
+                             group2["Walnut",]-group2["Shrubs",],
+                             group2["Walnut",]-group2["Grass",],
+                             group2["Corn",]-group2["Shrubs",],
+                             group2["Corn",]-group2["Grass",],
+                             group2["Shrubs",]-group2["Grass",]))
+# the following row is optional
+row.names(contrasts)<- c("walnut-Corn","Walnut-Shrubs","Walnut-Grass","Corn-Shrubs","Corn-Grass","Shrubs-Grass")
+# Compute the test using glht
+test <- glht(m.gls7a, linfct = contrasts)
+
+# Summarize the test results
+summary(test)
+```
+
+Results from the contrasts show that not all sites are significantly
+different. As such, we combine sites with the highest p value and lowest
+absolute z-value.
+
+```{r}
+df.sub$Site <- df.sub$Site
+levels(df.sub$Site)
+# combining Walnut and Corn
+levels(df.sub$Site) <- c("Walnut-Corn","Walnut-Corn","Shrubs","Grass")
+
+vf7 <- varConstPower(form=~Precipitation|Site)
+m.gls7b <- gls(Runoff ~ Precipitation+Site,
+             weights = vf7,
+          data = df.sub)
+summary(m.gls7b)
+
+anova(m.gls7a,m.gls7b)
+#anova(m.gls7a,m.gls7b,test="Chi")
+```
+
+From the summary, we see NOT all parameters are significant. From the
+anova, we see the new model is NOT significantly worse.
+
+Next, we want to find out, if the other sites are significantly
+different from another. For that we need to define the contrasts.
+Running `coef(m.gls7b)` informs us of the number of model coefficients
+as well as the type so that we can define the contrast matrix
+accordingly.
+
+```{r}
+# first we capture all the categorial variables in the variable group
+group <- df.sub$Site
+# Then we aggregate the different model coefficients by group
+group2 <- aggregate(model.matrix(m.gls7b,data=df.sub) ~ group, FUN=mean)
+rownames(group2) <- group2$group
+# we delete the first column
+(group2 <- group2[,-1])
+# for the numerical variable Precipitation we set the values in group2 to 1 
+# (more specific, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
+group2[(group2[,]>0)]<-1
+
+# now we can define the contrasts of interest
+contrasts <- as.matrix(rbind(group2["Walnut-Corn",]-group2["Shrubs",],
+                             group2["Walnut-Corn",]-group2["Grass",],
+                             group2["Shrubs",]-group2["Grass",]))
+# the following row is optional
+row.names(contrasts)<- c("walnut-Corn-Shrubs","Walnut-Corn-Grass","Shrubs-Grass")
+# Compute the test using glht
+test <- glht(m.gls7b, linfct = contrasts)
+
+# Summarize the test results
+summary(test)
+```
+
+Results from the contrasts show that not all sites are significantly
+different. As such, we combine sites with the highest p value and lowest
+absolute z-value.
+
+```{r}
+df.sub$Site <- df.sub$Site
+levels(df.sub$Site)
+# combining Shrubs and Grass
+levels(df.sub$Site) <- c("Walnut-Corn","Shrubs-Grass","Shrubs-Grass")
+
+vf7 <- varConstPower(form=~Precipitation|Site)
+m.gls7c <- gls(Runoff ~ Precipitation+Site,
+             weights = vf7,
+          data = df.sub)
+summary(m.gls7c)
+
+anova(m.gls7b,m.gls7c)
+#anova(m.gls7b,m.gls7c,test="Chi")
+
+```
+
+From the summary, we see all parameters are significant. However, from
+the anova, we see the new model is significantly worse and the AIC has
+increased. So we reject m.gls7c and accept m.gls7b as the best model.
+
+### Binomial Modeling using GLM
+
+We call Site Treatment from now on
+
+```{r}
+df.sub <- subset(runoff.glm,Source=="Wang2022")
+
+df.sub$Site<-factor(df.sub$Site)
+
+levels(df.sub$Site)
+
+# combining all similar plots:
+# walnut plots: 1, 5, 9  
+# grass plots: 2, 7, 12 
+# shrubs plots: 3, 8, 11 and 
+# corn: 4, 6, 10
+
+levels(df.sub$Site) <- c("Walnut","Corn","Shrubs","Grass","Grass","Shrubs", "Corn","Walnut","Corn","Grass","Shrubs","Walnut")
+
+names(df.sub)[names(df.sub)=="Site"]  <- "Treatment"
+# recode the site factor levels
+df.sub$Treatment<-factor(df.sub$Treatment)
+```
+
+For the binomial modeling we use a binomial response variable as we are
+only interested, if a storm (precipitation depth) has resulted in runoff
+(binary.runoff==1) or not (binary.runoff==0). First, we determine the
+best log-link. We test logit (the default), probit, and cloglog.
+
+```{r}
+m.glm.1a <- glm(binary.runoff ~ lPrecipitation*Treatment,
+          data = df.sub,
+          family = binomial(link="logit"))
+anova(m.glm.1a,test="Chi")
+
+m.glm.1b <- glm(binary.runoff ~ lPrecipitation*Treatment,
+          data = df.sub,
+          family = binomial(link="probit"))
+summary(m.glm.1b)
+anova(m.glm.1a,m.glm.1b,test="Chi")
+
+m.glm.1c <- glm(binary.runoff ~ lPrecipitation*Treatment,
+            data = df.sub,
+            family = binomial(link="cloglog"))
+summary(m.glm.1c)
+anova(m.glm.1a,m.glm.1b,m.glm.1c,test="Chi")
+```
+
+The residual deviation is slightly lower for the logit so we use the
+cloglog link. Now we simplify the model to only include significant
+variables.
+
+```{r}
+drop1(m.glm.1c,test="Chi")
+
+#drop1 indicates the interaction between preciptation and treatment is not significant. We remove this interaction. 
+
+m.glm.2 <- glm(binary.runoff ~ lPrecipitation+Treatment,
+          data = df.sub,
+          family = binomial(link="cloglog"))
+summary(m.glm.2)
+```
+
+Let's test if the model has become significantly 'worse':
+
+```{r}
+
+anova(m.glm.1c,m.glm.2, test="Chi")
+```
+
+That is not the case, so we accept m.glm.2 as the best model. From
+summary(m.glm.2) we know that not all treatments are significantly
+different from walnut (intercept). Let's test (contrast), if the others
+are significantly different from one another.
+
+```{r}
+# first we extract the categorial variables
+group <- df.sub$Treatment
+# Then we aggregate the different model coefficients by group
+group2 <- aggregate(model.matrix(m.glm.2,data=df.sub) ~ group, FUN=mean)
+rownames(group2) <- group2$group
+# we delete the first column
+(group2 <- group2[,-1])
+# for the numerical variable Precipitation we set the values in group2 to 1 
+# (more specific, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
+group2[(group2[,]>0)]<-1
+
+# now we can define the contrasts of interest
+contrasts <- as.matrix(rbind(group2["Walnut",]-group2["Corn",],
+                             group2["Walnut",]-group2["Shrubs",],
+                             group2["Walnut",]-group2["Grass",],
+                             group2["Corn",]-group2["Shrubs",],
+                             group2["Corn",]-group2["Grass",],
+                             group2["Shrubs",]-group2["Grass",]))
+# the following row is optional
+row.names(contrasts)<- c("walnut-Corn","Walnut-Shrubs","Walnut-Grass","Corn-Shrubs","Corn-Grass","Shrubs-Grass")
+
+# Compute the test using glht
+test <- glht(m.glm.2, linfct = contrasts)
+
+# Summarize the test results
+summary(test)
+```
+
+Results from the contrasts show that none of the treatments are
+significantly different. As such, we combine sites with the highest p
+value and lowest absolute z-value.
+
+```{r}
+df.sub$Treatment <- df.sub$Treatment
+levels(df.sub$Treatment)
+# combining Walnut and Shrubs
+levels(df.sub$Treatment) <- c("Walnut+Shrubs","Corn","Walnut+Shrubs","Grass")
+
+m.glm.2a <- glm(binary.runoff ~ lPrecipitation+Treatment,
+          data = df.sub,
+          family = binomial(link="cloglog"))
+summary(m.glm.2a)
+
+anova(m.glm.2,m.glm.2a, test="Chi")
+
+```
+
+From the summary, we see not all treatments are significantly different
+from treatment Walnut-Shrubs (intercept). From the anova, we see the new
+model is NOT significantly worse.
+
+Next, we want to find out, if the other sites are significantly
+different from another. For that we need to define the contrasts.
+Running `coef(m.glm.2a)` informs us of the number of model coefficients
+as well as the type so that we can define the contrast matrix
+accordingly.
+
+```{r}
+# first we extract the categorial variables
+group <- df.sub$Treatment
+# Then we aggregate the different model coefficients by group
+group2 <- aggregate(model.matrix(m.glm.2a,data=df.sub) ~ group, FUN=mean)
+rownames(group2) <- group2$group
+# we delete the first column
+(group2 <- group2[,-1])
+# for the numerical variable Precipitation we set the values in group2 to 1 
+# (more specific, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
+group2[(group2[,]>0)]<-1
+
+# now we can define the contrasts of interest
+contrasts <- as.matrix(rbind(group2["Walnut+Shrubs",]-group2["Corn",],
+                             group2["Walnut+Shrubs",]-group2["Grass",],
+                             group2["Corn",]-group2["Grass",]))
+# the following row is optional
+row.names(contrasts)<- c("Walnut+Shrubs-Corn","Walnut+Shrubs-Grass","Corn-Grass")
+
+# Compute the test using glht
+test <- glht(m.glm.2a, linfct = contrasts)
+
+# Summarize the test results
+summary(test)
+```
+
+Results from the contrasts show that not all treatments are
+significantly different. As such, we combine sites with the highest p
+value and lowest absolute z-value.
+
+```{r}
+df.sub$Treatment <- df.sub$Treatment
+levels(df.sub$Treatment)
+# combining Walnut and Shrubs
+levels(df.sub$Treatment) <- c("Walnut+Shrubs+Corn","Walnut+Shrubs+Corn","Grass")
+
+m.glm.2b <- glm(binary.runoff ~ lPrecipitation+Treatment,
+          data = df.sub,
+          family = binomial(link="cloglog"))
+summary(m.glm.2b)
+
+anova(m.glm.2a,m.glm.2b, test="Chi")
+
+```
+
+From the summary, we see precipitation and treatment are now
+significant. From the anova, we see the new model is not significantly
+worse, so we accept m.glm.2b as the best model.
+
+Finally, we compute the predicted values:
+
+```{r}
+df.pred <- expand.grid(lPrecipitation=seq(min(df.sub$lPrecipitation)-2,max(df.sub$lPrecipitation)+1+0.2,length.out=100),
+                       Treatment=unique(df.sub$Treatment))
+df.pred$runoff.pred <-predict(m.glm.2b,df.pred,type="response")
+df.pred$Precipitation<-10^df.pred$lPrecipitation
+```
+
+We plot the data, together with the threshold values of the original
+linear model (m.lm.bs). This information is stored on the data frame
+`m.lm.bs`.
+
+```{r}
+# extract thresholds first for better readability.
+th.1 <- m.lm.bs[( m.lm.bs$Treatment=="Corn"),]$threshold
+th.2 <- m.lm.bs[( m.lm.bs$Treatment=="Grass"),]$threshold
+th.3 <- m.lm.bs[( m.lm.bs$Treatment=="Shrubs"),]$threshold
+th.4 <- m.lm.bs[( m.lm.bs$Treatment=="Walnut"),]$threshold
+
+
+ggplot(df.pred,aes(x=Precipitation,y=runoff.pred))+
+  geom_line(aes(color=Treatment))+xlab("Precipitation [mm]")+theme_gray()+
+  ylab("Runoff Probability [-]")+theme(legend.position = "top")+
+  ggtitle("Wang (2022) - cloglog link with log-transformed precipitation")+
+  geom_jitter(df.sub,mapping=aes(x=Precipitation, y=binary.runoff,color=Treatment),
+              width=0, height=0.02)+
+  geom_hline(yintercept=0.90, linetype="dashed", color="black")+ 
+  geom_hline(yintercept=0.10, linetype="dashed", color="black")+
+  geom_vline(xintercept=th.1, linetype="dotted", color="red")+ # plot Corn threshold
+  geom_vline(xintercept=th.2, linetype="dotted", color="green")+# plot Grass threshold
+  geom_vline(xintercept=th.3, linetype="dotted", color="blue")+# plot Shrubs threshold
+ geom_vline(xintercept=th.4, linetype="dotted", color="pink")# plot Walnut threshold
+```
+
+We use the probabilities of 10% and 90% to determine precipitation
+depths which do not result low chance of runoff (p\<0.1), high chance of
+runoff (p\>0.9) and transitioning (0.1 \< p \< 0.9). This data is
+extracted from the data frame of predicted values `df.pred`. We are
+adding this information as new columns p10 and p90 to the already
+existing results data.frame. For iterations, we use the already defined
+variable factor.levels.
+
+### Probability Calculation
+
+```{r}
+results.bs$probability<-0
+results$p10<-0
+results$p90<-0
+results$p.m.lm<-0
+results$p.m.gls<-0
+results$p.m.log.lm<-0
+results$p.m.log.gls<-0
+threshold <-
+  data.frame(
+    Treatment = character(),
+    Method = character(),
+    threshold = numeric(),
+    runoff.prob = numeric()
+  )
+for (i in 1:length(factor.levels)){
+  runoff.pred.sub <- df.pred[grep(factor.levels[i],df.pred$Treatment),]
+  temp <- approx(runoff.pred.sub$runoff.pred,runoff.pred.sub$Precipitation,0.1)[[2]]
+  temp <- round(temp,1)
+  results[(results$Treatment==factor.levels[i]),]$p10<-temp
+   temp <- approx(runoff.pred.sub$runoff.pred,runoff.pred.sub$Precipitation,0.9)[[2]]
+  temp <- round(temp,1)
+  results[(results$Treatment==factor.levels[i]),]$p90<-temp
+    ## extract p values for the thresholds
+  ### m.lm
+  th.temp<-m.lm.bs[m.lm.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="LR",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.lm<-temp
+    ### m.gls
+  th.temp<-m.gls.bs[m.gls.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="LR+ME",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.gls<-temp
+    ### m.log.lm
+  th.temp<-10^m.log.lm.bs[m.log.lm.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="log(LR)",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.log.lm<-temp
+    ### m.log.gls
+  th.temp<-10^m.log.gls.bs[m.log.gls.bs$Treatment==factor.levels[i],]$threshold
+  temp <- approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,th.temp)[[2]]
+  threshold<-rbind(threshold,data.frame(Treatment=factor.levels[i],Method="log(LR)+ME",value=th.temp,runoff.prob=temp))
+  temp <- round(temp,2)
+  results[(results$Treatment==factor.levels[i]),]$p.m.log.gls<-temp
+    ##########################
+  #### now extract values for the results.bs
+  prec.depth<-results.bs[grep(factor.levels[i],results.bs$Treatment),]$prec.depth
+  temp <- round(approx(runoff.pred.sub$Precipitation,runoff.pred.sub$runoff.pred,prec.depth,rule=2)[[2]],3)
+  results.bs[grep(factor.levels[i],results.bs$Treatment),]$probability<-temp
+}
+```
+
+```{r}
+results.Wang2022<- results
+results.bs.Wang2022<- results.bs
+```
+
+Write the data necessary for plotting into an rda file
+
+```{r}
+save(df.pred,df.sub,results.bs,threshold,file="PlottingData_Wang2022.rda")
+```
+
+This concludes the analysis for this data set.
+
+Awkward observations
+
+-   Hood - m.log.gls7 summary the traditional and control are sig.
+    different. However, when we perform the contrasting, the results
+    show that they are not significantly different.
+
+# Compile All Results
+
+```{r}
+results.all <- rbind(results.Hood2007,
+                   results.Bean2007,
+                   results.Tirpak2021,
+                   results.Radovanovic2022,
+                   results.Wang2022)
+save(results.all,file="results.all.rda",compress="xz")
+write.csv(results.all,"results.all.csv",row.names = FALSE)
+results.bs.all <- rbind(results.bs.Hood2007,
+                   results.bs.Bean2007,
+                   results.bs.Tirpak2021,
+                   results.bs.Radovanovic2022,
+                   results.bs.Wang2022)
+save(results.bs.all,file="results.bs.all.rda",compress="xz")
+```
