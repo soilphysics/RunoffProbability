@@ -424,6 +424,7 @@ We call Site Treatment from now on:
 
 ```{r}
 df.sub <- subset(runoff.glm,Source=="Hood2007")
+df.sub$lPrecipitation<-log10(df.sub$Precipitation)
 names(df.sub)[names(df.sub)=="Site"]  <- "Treatment"
 # recode the site factor levels
 df.sub$Treatment<-factor(df.sub$Treatment)
@@ -435,6 +436,9 @@ only interested, if a storm (precipitation depth) has resulted in runoff
 best log-link. We test logit (the default), probit, and cloglog.
 
 ```{r}
+m.glm <- glm(binary.runoff ~ 1,
+          data = df.sub,
+          family = binomial(link="logit"))
 m.glm.1a <- glm(binary.runoff ~ lPrecipitation*Treatment,
           data = df.sub,
           family = binomial(link="logit"))
@@ -450,7 +454,7 @@ m.glm.1c <- glm(binary.runoff ~ lPrecipitation*Treatment,
             data = df.sub,
             family = binomial(link="cloglog"))
 summary(m.glm.1c)
-anova(m.glm.1a,m.glm.1b,m.glm.1c,test="Chi")
+anova(m.glm,m.glm.1a,m.glm.1b,m.glm.1c,test="Chi")
 ```
 
 The residual deviation is slightly lower for the probit so we use the
@@ -478,7 +482,7 @@ anova(m.glm.1b,m.glm.2, test="Chi")
 That is not the case, so we accept m.glm.2 as the best model. From
 summary(m.glm.2) we know that the mean values of LID and Traditional are
 significantly different from control. Let's test (contrast), if LID and
-Tradtional are significantly different form another.
+Traditional are significantly different form another.
 
 ```{r}
 # first we extract the categorial variables
@@ -505,28 +509,45 @@ test <- glht(m.glm.2, linfct = contrasts)
 summary(test)
 ```
 
-LID is significantly different from the Control. However, Control and
-Traditional are not (p=0.0656). We combine the two variables to see if
-that makes a significant difference in the variance explained by the
-model.
+LID, Traditional, and Control are all significantly different one
+another. We accept m.glm.2 as the best model.
+
+#### Goodness of Fit Tests
+
+We perform a Hosmer-Lemeshow Goodness of Fit Test, a Wald test and a
+Person Chi Test as a goodness of fit test for the best binomial model.
 
 ```{r}
-df.sub$Treatment2 <- df.sub$Treatment
-levels(df.sub$Treatment2)
-# combining Control and Traditional
-levels(df.sub$Treatment2) <- c("CT","LID","CT")
-m.glm.2a <- glm(binary.runoff ~ lPrecipitation+Treatment2,
-          data = df.sub,
-          family = binomial(link="probit"))
-summary(m.glm.2a)
-anova(m.glm.2, m.glm.2a,test="Chi")
+# perform the Hosmer-Lemeshow Goodness of Fit Test
+m.gof<-m.glm.2
+(ht <- hoslem.test(df.sub$binary.runoff, fitted(m.gof)))
+# perform the Wald test
+(wt <- regTermTest(m.gof, "lPrecipitation"))
+
+# perform a Chi test
+(pt <- 1-pchisq(m.gof$null.deviance-m.gof$deviance, m.gof$df.null-m.gof$df.residual))
+
+# The Pearson chi-squared statistic, in the context of goodness-of-fit testing for logistic regression, should ideally have a value close to its degrees of freedom. If the Pearson chi-squared statistic is much larger than the degrees of freedom, it may indicate a lack of fit, suggesting that the model does not adequately represent the data.
+
+# In practice, you compare the Pearson chi-squared statistic to its degrees of freedom and use a chi-squared distribution to calculate a p-value. If the p-value is small (typically less than 0.05), it suggests that there is a significant lack of fit, and the model does not adequately explain the variation in the data.
+
+# For the Pearson chi-squared statistic, you're essentially conducting a chi-squared test to assess the goodness of fit:
+
+# Null Hypothesis (H0): The model fits the data well.
+# Alternative Hypothesis (Ha): The model does not fit the data well.
+# If the p-value is small (e.g., less than 0.05), you may conclude that the model does not fit the data well, indicating a problem with the model. However, if the p-value is not significantly small, it suggests that the model provides a reasonable fit to the data.
+
+# compile into one data frame 
+gof <- data.frame(author=df.sub$Source[1],
+                  hoslem=ht$p.value,
+                  wald = as.numeric(wt$p),
+                  l.r = pt)
 ```
 
-The model becomes significantly 'worse' so we keep the 3 levels of
-treatments. Finally, we compute the predicted values:
+Finally, we compute the predicted values:
 
 ```{r}
-df.pred <- expand.grid(lPrecipitation=seq(min(df.sub$lPrecipitation)-2,max(df.sub$lPrecipitation)+1,length.out=100),
+df.pred <- expand.grid(lPrecipitation=seq(min(df.sub$lPrecipitation)-2,max(df.sub$lPrecipitation)+0.1,length.out=100),
                        Treatment=unique(df.sub$Treatment))
 df.pred$runoff.pred <-predict(m.glm.2,df.pred,type="response")
 df.pred$Precipitation<-10^df.pred$lPrecipitation
@@ -561,7 +582,9 @@ runoff (p\>0.9) and transitioning (0.1 \< p \< 0.9). This data is
 extracted from the data frame of predicted values `df.pred`. We are
 adding this information as new columns p10 and p90 to the already
 existing results data.frame. For iterations, we use the already defined
-variable factor.levels. \### Probability Calculation
+variable factor.levels.
+
+### Probability Calculation
 
 ```{r}
 results.bs$probability<-0
@@ -945,7 +968,7 @@ We call Site Treatment from now on:
 # We redefine df.sub to use the glm data set which includes the 0,0.1 datapoint
 
 df.sub<-subset(runoff.glm,Source=="Tirpak2021")
-
+df.sub$lPrecipitation<-log10(df.sub$Precipitation)
 names(df.sub)[names(df.sub)=="Site"]  <- "Treatment"
 ```
 
@@ -958,6 +981,10 @@ curve goes from one to zero which is indicating 100% chance of runoff
 for zero precipitation.
 
 ```{r}
+m.glm <- glm(binary.runoff ~ 1,
+          data = df.sub,
+          family = binomial(link="logit"))
+
 m.glm.1a <- glm(binary.runoff ~ lPrecipitation+Treatment,
           data = df.sub,
           family = binomial(link="logit"))
@@ -973,26 +1000,62 @@ m.glm.1c <- glm(binary.runoff ~ lPrecipitation+Treatment,
             data = df.sub,
             family = binomial(link="cloglog"))
 summary(m.glm.1c)
-anova(m.glm.1a,m.glm.1b,m.glm.1c,test="Chi")
+anova(m.glm,m.glm.1a,m.glm.1b,m.glm.1c,test="Chi")
 ```
 
-The residual deviation is slightly lower for the logit so we use the
-logit link. Now we simplify the model to only include significant
-variables.
+The residual deviation is slightly higher for the logit but the probit
+and cloglog result in a warning so we use the logit link. Now we
+simplify the model to only include significant variables.
 
 ```{r}
 drop1(m.glm.1a,test="Chi")
+m.glm.2 <- glm(binary.runoff ~ lPrecipitation,
+               data = df.sub,
+               family = binomial(link="logit"))
+anova(m.glm.1a,m.glm.2,test="Chi")
 
 
 ```
 
-The drop1 command tells us that the interaction is between precipitation
-and treatment is significant. So we accept m.glm.1a as the best model.
+The drop1 command tells us that precipitation and treatment are
+significant. So we accept m.glm.1a as the best model.
+
+#### Goodness of Fit Tests
+
+We perform a Hosmer-Lemeshow Goodness of Fit Test, a Wald test and a
+Person Chi Test as a goodness of fit test for the best binomial model.
+
+```{r}
+# perform the Hosmer-Lemeshow Goodness of Fit Test
+m.gof<-m.glm.1a
+(ht <- hoslem.test(df.sub$binary.runoff, fitted(m.gof)))
+# perform the Wald test
+(wt <- regTermTest(m.gof, "lPrecipitation"))
+
+# perform a Chi test
+(pt <- 1-pchisq(m.gof$null.deviance-m.gof$deviance, m.gof$df.null-m.gof$df.residual))
+
+# The Pearson chi-squared statistic, in the context of goodness-of-fit testing for logistic regression, should ideally have a value close to its degrees of freedom. If the Pearson chi-squared statistic is much larger than the degrees of freedom, it may indicate a lack of fit, suggesting that the model does not adequately represent the data.
+
+# In practice, you compare the Pearson chi-squared statistic to its degrees of freedom and use a chi-squared distribution to calculate a p-value. If the p-value is small (typically less than 0.05), it suggests that there is a significant lack of fit, and the model does not adequately explain the variation in the data.
+
+# For the Pearson chi-squared statistic, you're essentially conducting a chi-squared test to assess the goodness of fit:
+
+# Null Hypothesis (H0): The model fits the data well.
+# Alternative Hypothesis (Ha): The model does not fit the data well.
+# If the p-value is small (e.g., less than 0.05), you may conclude that the model does not fit the data well, indicating a problem with the model. However, if the p-value is not significantly small, it suggests that the model provides a reasonable fit to the data.
+
+# compile into one data frame 
+gof <- rbind(gof,data.frame(author=df.sub$Source[1],
+                  hoslem=ht$p.value,
+                  wald = as.numeric(wt$p),
+                  l.r = pt))
+```
 
 Here we compute the predicted values:
 
 ```{r}
-df.pred <- expand.grid(lPrecipitation=seq(min(df.sub$lPrecipitation)-2,max(df.sub$lPrecipitation)+1,length.out=100),
+df.pred <- expand.grid(lPrecipitation=seq(min(df.sub$lPrecipitation)-2,max(df.sub$lPrecipitation)+0.1,length.out=100),
                        Treatment=unique(df.sub$Treatment))
 df.pred$runoff.pred <-predict(m.glm.1a,df.pred,type="response")
 df.pred$Precipitation<-10^df.pred$lPrecipitation
@@ -1426,6 +1489,7 @@ We call Site Treatment from now on:
 ```{r}
 df.sub <- subset(runoff.glm,Source=="Bean2007")
 names(df.sub)[names(df.sub)=="Site"]  <- "Treatment"
+df.sub$lPrecipitation<-log10(df.sub$Precipitation)
 # recode the site factor levels
 df.sub$Treatment<-factor(df.sub$Treatment)
 ```
@@ -1436,6 +1500,9 @@ only interested, if a storm (precipitation depth) has resulted in runoff
 best log-link. We test logit (the default), probit, and cloglog.
 
 ```{r}
+m.glm <- glm(binary.runoff ~ 1,
+          data = df.sub,
+          family = binomial(link="logit"))
 m.glm.1a <- glm(binary.runoff ~ lPrecipitation*Treatment,
           data = df.sub,
           family = binomial(link="logit"))
@@ -1451,7 +1518,7 @@ m.glm.1c <- glm(binary.runoff ~ lPrecipitation*Treatment,
             data = df.sub,
             family = binomial(link="cloglog"))
 summary(m.glm.1c)
-anova(m.glm.1a,m.glm.1b,m.glm.1c,test="Chi")
+anova(m.glm,m.glm.1a,m.glm.1b,m.glm.1c,test="Chi")
 ```
 
 The residual deviation is slightly lower for the logit so we use the
@@ -1461,7 +1528,7 @@ variables.
 ```{r}
 drop1(m.glm.1a,test="Chi")
 
-#drop1 indicates the interaction between preciptation and treatment is not significant. We remove this interaction. 
+#drop1 indicates the interaction between precipitation and treatment is not significant. We remove this interaction. 
 
 m.glm.2 <- glm(binary.runoff ~ lPrecipitation+Treatment,
           data = df.sub,
@@ -1480,10 +1547,42 @@ That is not the case, so we accept m.glm.2 as the best model. From
 summary(m.glm.2) we know that the mean values of the Kinston and
 Wilmington sites are significantly different each other.
 
+#### Goodness of Fit Tests
+
+We perform a Hosmer-Lemeshow Goodness of Fit Test, a Wald test and a
+Person Chi Test as a goodness of fit test for the best binomial model.
+
+```{r}
+# perform the Hosmer-Lemeshow Goodness of Fit Test
+m.gof<-m.glm.2
+(ht <- hoslem.test(df.sub$binary.runoff, fitted(m.gof)))
+# perform the Wald test
+(wt <- regTermTest(m.gof, "lPrecipitation"))
+
+# perform a Chi test
+(pt <- 1-pchisq(m.gof$null.deviance-m.gof$deviance, m.gof$df.null-m.gof$df.residual))
+
+# The Pearson chi-squared statistic, in the context of goodness-of-fit testing for logistic regression, should ideally have a value close to its degrees of freedom. If the Pearson chi-squared statistic is much larger than the degrees of freedom, it may indicate a lack of fit, suggesting that the model does not adequately represent the data.
+
+# In practice, you compare the Pearson chi-squared statistic to its degrees of freedom and use a chi-squared distribution to calculate a p-value. If the p-value is small (typically less than 0.05), it suggests that there is a significant lack of fit, and the model does not adequately explain the variation in the data.
+
+# For the Pearson chi-squared statistic, you're essentially conducting a chi-squared test to assess the goodness of fit:
+
+# Null Hypothesis (H0): The model fits the data well.
+# Alternative Hypothesis (Ha): The model does not fit the data well.
+# If the p-value is small (e.g., less than 0.05), you may conclude that the model does not fit the data well, indicating a problem with the model. However, if the p-value is not significantly small, it suggests that the model provides a reasonable fit to the data.
+
+# compile into one data frame 
+gof <- rbind(gof,data.frame(author=df.sub$Source[1],
+                  hoslem=ht$p.value,
+                  wald = as.numeric(wt$p),
+                  l.r = pt))
+```
+
 Finally, we compute the predicted values:
 
 ```{r}
-df.pred <- expand.grid(lPrecipitation=seq(min(df.sub$lPrecipitation)-2,max(df.sub$lPrecipitation)+1,length.out=100),
+df.pred <- expand.grid(lPrecipitation=seq(min(df.sub$lPrecipitation)-2,max(df.sub$lPrecipitation)+0.1,length.out=100),
                        Treatment=unique(df.sub$Treatment))
 df.pred$runoff.pred <-predict(m.glm.2,df.pred,type="response")
 df.pred$Precipitation<-10^df.pred$lPrecipitation
@@ -2337,6 +2436,7 @@ We call Site Treatment from now on:
 
 ```{r}
 df.sub <- subset(runoff.glm,Source=="RadovanovicBean2022")
+df.sub$lPrecipitation<-log10(df.sub$Precipitation)
 names(df.sub)[names(df.sub)=="Site"]  <- "Treatment"
 # recode the site factor levels
 df.sub$Treatment<-factor(df.sub$Treatment)
@@ -2348,53 +2448,55 @@ only interested, if a storm (precipitation depth) has resulted in runoff
 best log-link. We test logit (the default), probit, and cloglog.
 
 ```{r}
-m.glm.1a <- glm(binary.runoff ~ lPrecipitation*Treatment,
+m.glm <- glm(binary.runoff ~ 1,
+          data = df.sub,
+          family = binomial(link="logit"))
+
+m.glm.1a <- glm(binary.runoff ~ lPrecipitation+Treatment,
           data = df.sub,
           family = binomial(link="logit"))
 anova(m.glm.1a,test="Chi")
 
-m.glm.1b <- glm(binary.runoff ~ lPrecipitation*Treatment,
+m.glm.1b <- glm(binary.runoff ~ lPrecipitation+Treatment,
           data = df.sub,
           family = binomial(link="probit"))
 summary(m.glm.1b)
 anova(m.glm.1a,m.glm.1b,test="Chi")
 
-m.glm.1c <- glm(binary.runoff ~ lPrecipitation*Treatment,
+m.glm.1c <- glm(binary.runoff ~ lPrecipitation+Treatment,
             data = df.sub,
             family = binomial(link="cloglog"))
 summary(m.glm.1c)
-anova(m.glm.1a,m.glm.1b,m.glm.1c,test="Chi")
+anova(m.glm,m.glm.1a,m.glm.1b,m.glm.1c,test="Chi")
 ```
 
-The residual deviation is slightly lower for the logit so we use the
-logit link. Now we simplify the model to only include significant
-variables.
+The residual deviation is slightly higher for the logit but the probit
+and the cloglog had convergence issues so we use the logit link. Now we
+simplify the model to only include significant variables.
 
 ```{r}
+
 drop1(m.glm.1a,test="Chi")
 
-#drop1 indicates the interaction between preciptation and treatment is not significant. We remove this interaction. 
+#drop1 indicates the interaction between precipitation and treatment is not significant. We remove this interaction. 
 
 m.glm.2 <- glm(binary.runoff ~ lPrecipitation+Treatment,
           data = df.sub,
           family = binomial(link="logit"))
-summary(m.glm.2)
+# summary(m.glm.2)
+# 
+# anova(m.glm.1a,m.glm.2, test="Chi")
+
+#adjust the model names so we can run the below code without adjustment #TK 2023-10-16
+m.glm.2<-m.glm.1a
 ```
 
-Let's test if the model has become significantly 'worse':
+From summary(m.glm.1a) we know that none of the treatments are
+significantly different from 607. Let's test (contrast), if the others
+are significantly different from one another.
 
 ```{r}
-
-anova(m.glm.1a,m.glm.2, test="Chi")
-```
-
-That is not the case, so we accept m.glm.2 as the best model. From
-summary(m.glm.2) we know that none of the treatments are significantly
-different from 607. Let's test (contrast), if the others are
-significantly different from one another.
-
-```{r}
-# first we extract the categorial variables
+# first we extract the categorical variables
 group <- df.sub$Treatment
 # Then we aggregate the different model coefficients by group
 group2 <- aggregate(model.matrix(m.glm.2,data=df.sub) ~ group, FUN=mean)
@@ -2402,7 +2504,7 @@ rownames(group2) <- group2$group
 # we delete the first column
 (group2 <- group2[,-1])
 # for the numerical variable Precipitation we set the values in group2 to 1 
-# (more specifiv, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
+# (more specific, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
 group2[(group2[,]>0)]<-1
 
 # now we can define the contrasts of interest
@@ -2463,8 +2565,8 @@ anova(m.glm.2,m.glm.2a, test="Chi")
 
 ```
 
-From the summary, we see only precipitation is significant. None of the
-Treatment are significantly different from treatment 607 (intercept).
+From the summary, we see precipitation is significant and not all of the
+Treatments are significantly different from treatment 607 (intercept).
 From the anova, we see the new model is not significantly worse.
 
 Next, we want to find out, if the other sites are significantly
@@ -2517,7 +2619,7 @@ test <- glht(m.glm.2a, linfct = contrasts)
 summary(test)
 ```
 
-Results from the contrasts show that none of the treatments are
+Results from the contrasts show that not all treatments are
 significantly different. As such, we combine sites with the highest p
 value and lowest absolute z-value.
 
@@ -2537,7 +2639,7 @@ anova(m.glm.2a,m.glm.2b, test="Chi")
 
 ```
 
-From the summary, we see only precipitation is significant. None of the
+From the summary, we see precipitation is significant. Not all of the
 treatments are significantly different from Site 607 (intercept). From
 the anova, we see the new model is not significantly worse.
 
@@ -2604,7 +2706,7 @@ anova(m.glm.2b,m.glm.2c, test="Chi")
 
 ```
 
-From the summary, we see only precipitation is significant. None of the
+From the summary, we see precipitation is significant. Not all of the
 treatments are significantly different from Site 607 (intercept). From
 the anova, we see the new model is not significantly worse.
 
@@ -2647,7 +2749,7 @@ test <- glht(m.glm.2c, linfct = contrasts)
 summary(test)
 ```
 
-Results from the contrasts show that none of the treatments are
+Results from the contrasts show that not all of the treatments are
 significantly different. As such, we combine sites with the highest p
 value and lowest absolute z-value. Next, we combine 607 and 619.
 
@@ -2666,7 +2768,7 @@ anova(m.glm.2c,m.glm.2d, test="Chi")
 
 ```
 
-From the summary, we see only precipitation is significant. None of the
+From the summary, we see precipitation is significant. Not all of the
 treatments are significantly different from treatments 607+619
 (intercept). From the anova, we see the new model is not significantly
 worse.
@@ -2706,7 +2808,7 @@ test <- glht(m.glm.2d, linfct = contrasts)
 summary(test)
 ```
 
-Results from the contrasts show that none of the treatments are
+Results from the contrasts show that not all of the treatments are
 significantly different. As such, we combine sites with the highest p
 value and lowest absolute z-value.
 
@@ -2725,65 +2827,9 @@ anova(m.glm.2d,m.glm.2e, test="Chi")
 
 ```
 
-From the summary, we see only precipitation is significant. None of the
-treatments are significantly different from treatments 607+619
-(intercept). From the anova, we see the new model is not significantly
-worse.
-
-Next, we want to find out, if the other sites are significantly
-different from another. For that we need to define the contrasts.
-Running `coef(m.glm.2e)` informs us of the number of model coefficients
-as well as the type so that we can define the contrast matrix
-accordingly.
-
-```{r}
-# first we extract the categorial variables
-group <- df.sub$Treatment
-# Then we aggregate the different model coefficients by group
-group2 <- aggregate(model.matrix(m.glm.2e,data=df.sub) ~ group, FUN=mean)
-rownames(group2) <- group2$group
-# we delete the first column
-(group2 <- group2[,-1])
-# for the numerical variable Precipitation we set the values in group2 to 1 
-# (more specific, all data that is >0 is set to 1 otherwise contrasts would be incorrect)
-group2[(group2[,]>0)]<-1
-
-# now we can define the contrasts of interest
-contrasts <- as.matrix(rbind(group2["607+619",]-group2["608",],
-                             group2["607+619",]-group2["610+612+618+623+627",],
-                             group2["608",]-group2["610+612+618+623+627",]))
-# the following row is optional
-row.names(contrasts)<- c("607+619-608","607+619-610+612+618+623+627","608-610+612+618+623+627")
-
-# Compute the test using glht
-test <- glht(m.glm.2e, linfct = contrasts)
-
-# Summarize the test results
-summary(test)
-```
-
-Results from the contrasts show that none of the treatments are
-significantly different. As such, we combine sites with the highest p
-value and lowest absolute z-value.
-
-```{r}
-df.sub$Treatment <- df.sub$Treatment
-levels(df.sub$Treatment)
-# combining 607+608+619
-levels(df.sub$Treatment) <- c("607+608+619","607+608+619","610+612+618+623+627")
-
-m.glm.2f <- glm(binary.runoff ~ lPrecipitation+Treatment,
-          data = df.sub,
-          family = binomial(link="logit"))
-summary(m.glm.2f)
-
-anova(m.glm.2e,m.glm.2f, test="Chi")
-
-```
-
 From the summary, we see precipitation and treatment are now
 significant. From the anova, we see the new model is not significantly
-worse, so we accept m.glm.2f as the best model.
+worse, so we accept m.glm.2e as the best model.
 
 607 = CompostNoTopdressing
 
@@ -2803,12 +2849,44 @@ worse, so we accept m.glm.2f as the best model.
 
 627 = ControlNoTopdressing
 
+#### Goodness of Fit Tests
+
+We perform a Hosmer-Lemeshow Goodness of Fit Test, a Wald test and a
+Pearson Chi Test as a goodness of fit test for the best binomial model.
+
+```{r}
+# perform the Hosmer-Lemeshow Goodness of Fit Test
+m.gof<-m.glm.2e
+(ht <- hoslem.test(df.sub$binary.runoff, fitted(m.gof)))
+# perform the Wald test
+(wt <- regTermTest(m.gof, "lPrecipitation"))
+
+# perform a Chi test
+(pt <- 1-pchisq(m.gof$null.deviance-m.gof$deviance, m.gof$df.null-m.gof$df.residual))
+
+# The Pearson chi-squared statistic, in the context of goodness-of-fit testing for logistic regression, should ideally have a value close to its degrees of freedom. If the Pearson chi-squared statistic is much larger than the degrees of freedom, it may indicate a lack of fit, suggesting that the model does not adequately represent the data.
+
+# In practice, you compare the Pearson chi-squared statistic to its degrees of freedom and use a chi-squared distribution to calculate a p-value. If the p-value is small (typically less than 0.05), it suggests that there is a significant lack of fit, and the model does not adequately explain the variation in the data.
+
+# For the Pearson chi-squared statistic, you're essentially conducting a chi-squared test to assess the goodness of fit:
+
+# Null Hypothesis (H0): The model fits the data well.
+# Alternative Hypothesis (Ha): The model does not fit the data well.
+# If the p-value is small (e.g., less than 0.05), you may conclude that the model does not fit the data well, indicating a problem with the model. However, if the p-value is not significantly small, it suggests that the model provides a reasonable fit to the data.
+
+# compile into one data frame 
+gof <- rbind(gof,data.frame(author=df.sub$Source[1],
+                  hoslem=ht$p.value,
+                  wald = as.numeric(wt$p),
+                  l.r = pt))
+```
+
 Finally, we compute the predicted values:
 
 ```{r}
-df.pred <- expand.grid(lPrecipitation=seq(min(df.sub$lPrecipitation)-2,max(df.sub$lPrecipitation)+1+0.1,length.out=100),
+df.pred <- expand.grid(lPrecipitation=seq(min(df.sub$lPrecipitation)-2,max(df.sub$lPrecipitation)+0.1,length.out=100),
                        Treatment=unique(df.sub$Treatment))
-df.pred$runoff.pred <-predict(m.glm.2f,df.pred,type="response")
+df.pred$runoff.pred <-predict(m.glm.2e,df.pred,type="response")
 df.pred$Precipitation<-10^df.pred$lPrecipitation
 ```
 
@@ -3374,7 +3452,7 @@ We call Site Treatment from now on
 df.sub <- subset(runoff.glm,Source=="Wang2022")
 
 df.sub$Site<-factor(df.sub$Site)
-
+df.sub$lPrecipitation<-log10(df.sub$Precipitation)
 levels(df.sub$Site)
 
 # combining all similar plots:
@@ -3383,11 +3461,13 @@ levels(df.sub$Site)
 # shrubs plots: 3, 8, 11 and 
 # corn: 4, 6, 10
 
-levels(df.sub$Site) <- c("Walnut","Corn","Shrubs","Grass","Grass","Shrubs", "Corn","Walnut","Corn","Grass","Shrubs","Walnut")
+df.sub$Treatment <- factor(df.sub$Site)
+levels(df.sub$Treatment) <- c("Walnut","Corn","Shrubs","Grass","Grass","Shrubs", "Corn","Walnut","Corn","Grass","Shrubs","Walnut")
 
-names(df.sub)[names(df.sub)=="Site"]  <- "Treatment"
 # recode the site factor levels
 df.sub$Treatment<-factor(df.sub$Treatment)
+
+
 ```
 
 For the binomial modeling we use a binomial response variable as we are
@@ -3396,56 +3476,49 @@ only interested, if a storm (precipitation depth) has resulted in runoff
 best log-link. We test logit (the default), probit, and cloglog.
 
 ```{r}
-m.glm.1a <- glm(binary.runoff ~ lPrecipitation*Treatment,
+m.glm <- glm(binary.runoff ~ 1,
           data = df.sub,
           family = binomial(link="logit"))
+m.glm.1a <- glm(binary.runoff ~ lPrecipitation+Treatment,
+                data = df.sub,
+                family = binomial(link="logit"))
 anova(m.glm.1a,test="Chi")
 
-m.glm.1b <- glm(binary.runoff ~ lPrecipitation*Treatment,
-          data = df.sub,
-          family = binomial(link="probit"))
+
+m.glm.1b <- glm(binary.runoff ~ lPrecipitation+Treatment,
+                data = df.sub,
+                family = binomial(link="probit"))
 summary(m.glm.1b)
 anova(m.glm.1a,m.glm.1b,test="Chi")
 
-m.glm.1c <- glm(binary.runoff ~ lPrecipitation*Treatment,
-            data = df.sub,
-            family = binomial(link="cloglog"))
+m.glm.1c <- glm(binary.runoff ~ lPrecipitation+Treatment,
+                data = df.sub,
+                family = binomial(link="cloglog"))
 summary(m.glm.1c)
-anova(m.glm.1a,m.glm.1b,m.glm.1c,test="Chi")
+anova(m.glm,m.glm.1a,m.glm.1b,m.glm.1c,test="Chi")
 ```
 
-The residual deviation is slightly lower for the logit so we use the
+The residual deviation is slightly lower for the cloglog so we use the
 cloglog link. Now we simplify the model to only include significant
 variables.
 
 ```{r}
 drop1(m.glm.1c,test="Chi")
 
-#drop1 indicates the interaction between preciptation and treatment is not significant. We remove this interaction. 
+#The drop1 command tells us that the interaction is between precipitation and treatment is significant. So we accept m.glm.1c as the best model.
 
-m.glm.2 <- glm(binary.runoff ~ lPrecipitation+Treatment,
-          data = df.sub,
-          family = binomial(link="cloglog"))
-summary(m.glm.2)
+
 ```
 
-Let's test if the model has become significantly 'worse':
-
-```{r}
-
-anova(m.glm.1c,m.glm.2, test="Chi")
-```
-
-That is not the case, so we accept m.glm.2 as the best model. From
-summary(m.glm.2) we know that not all treatments are significantly
-different from walnut (intercept). Let's test (contrast), if the others
-are significantly different from one another.
+From summary(m.glm.1c) we know that not all treatments are significantly
+different from Treatment Walmut (intercept). Let's test (contrast), if
+the others are significantly different from one another.
 
 ```{r}
 # first we extract the categorial variables
 group <- df.sub$Treatment
 # Then we aggregate the different model coefficients by group
-group2 <- aggregate(model.matrix(m.glm.2,data=df.sub) ~ group, FUN=mean)
+group2 <- aggregate(model.matrix(m.glm.1c,data=df.sub) ~ group, FUN=mean)
 rownames(group2) <- group2$group
 # we delete the first column
 (group2 <- group2[,-1])
@@ -3464,46 +3537,38 @@ contrasts <- as.matrix(rbind(group2["Walnut",]-group2["Corn",],
 row.names(contrasts)<- c("walnut-Corn","Walnut-Shrubs","Walnut-Grass","Corn-Shrubs","Corn-Grass","Shrubs-Grass")
 
 # Compute the test using glht
-test <- glht(m.glm.2, linfct = contrasts)
+test <- glht(m.glm.1c, linfct = contrasts)
 
 # Summarize the test results
 summary(test)
 ```
 
-Results from the contrasts show that none of the treatments are
+Results from the contrasts show that several of the treatments are
 significantly different. As such, we combine sites with the highest p
-value and lowest absolute z-value.
+value and lowest absolute z-value. We combine Corn and Shrubs.
 
 ```{r}
 df.sub$Treatment <- df.sub$Treatment
 levels(df.sub$Treatment)
 # combining Walnut and Shrubs
-levels(df.sub$Treatment) <- c("Walnut+Shrubs","Corn","Walnut+Shrubs","Grass")
+levels(df.sub$Treatment) <- c("Walnut","Corn+Shrubs","Corn+Shrubs","Grass")
 
-m.glm.2a <- glm(binary.runoff ~ lPrecipitation+Treatment,
-          data = df.sub,
-          family = binomial(link="cloglog"))
-summary(m.glm.2a)
+m.glm.1c2 <- glm(binary.runoff ~ lPrecipitation+Treatment,
+                 data = df.sub,
+                 family = binomial(link="cloglog"))
+summary(m.glm.1c2)
 
-anova(m.glm.2,m.glm.2a, test="Chi")
+anova(m.glm.1c,m.glm.1c2, test="Chi")
 
 ```
 
-From the summary, we see not all treatments are significantly different
-from treatment Walnut-Shrubs (intercept). From the anova, we see the new
-model is NOT significantly worse.
-
-Next, we want to find out, if the other sites are significantly
-different from another. For that we need to define the contrasts.
-Running `coef(m.glm.2a)` informs us of the number of model coefficients
-as well as the type so that we can define the contrast matrix
-accordingly.
+The model did not becomes significantly 'worse' so we keep contrasting.
 
 ```{r}
 # first we extract the categorial variables
 group <- df.sub$Treatment
 # Then we aggregate the different model coefficients by group
-group2 <- aggregate(model.matrix(m.glm.2a,data=df.sub) ~ group, FUN=mean)
+group2 <- aggregate(model.matrix(m.glm.1c,data=df.sub) ~ group, FUN=mean)
 rownames(group2) <- group2$group
 # we delete the first column
 (group2 <- group2[,-1])
@@ -3512,48 +3577,79 @@ rownames(group2) <- group2$group
 group2[(group2[,]>0)]<-1
 
 # now we can define the contrasts of interest
-contrasts <- as.matrix(rbind(group2["Walnut+Shrubs",]-group2["Corn",],
-                             group2["Walnut+Shrubs",]-group2["Grass",],
-                             group2["Corn",]-group2["Grass",]))
+contrasts <- as.matrix(rbind(group2["Walnut",]-group2["Corn+Shrubs",],
+                             group2["Walnut",]-group2["Grass",],
+                             group2["Corn+Shrubs",]-group2["Grass",]))
 # the following row is optional
-row.names(contrasts)<- c("Walnut+Shrubs-Corn","Walnut+Shrubs-Grass","Corn-Grass")
+row.names(contrasts)<- c("walnut-Corn+Shrubs","Walnut-Grass","Corn+Shrubs-Grass")
 
 # Compute the test using glht
-test <- glht(m.glm.2a, linfct = contrasts)
-
-# Summarize the test results
+test <- glht(m.glm.1c2, linfct = contrasts)
 summary(test)
+
 ```
 
-Results from the contrasts show that not all treatments are
+Results from the contrasts show that several of the treatments are
 significantly different. As such, we combine sites with the highest p
-value and lowest absolute z-value.
+value and lowest absolute z-value. We combine Walnut wiith Corn+Shrubs.
 
 ```{r}
 df.sub$Treatment <- df.sub$Treatment
 levels(df.sub$Treatment)
 # combining Walnut and Shrubs
-levels(df.sub$Treatment) <- c("Walnut+Shrubs+Corn","Walnut+Shrubs+Corn","Grass")
+levels(df.sub$Treatment) <- c("Walnut+Corn+Shrubs","Walnut+Corn+Shrubs","Grass")
 
-m.glm.2b <- glm(binary.runoff ~ lPrecipitation+Treatment,
-          data = df.sub,
-          family = binomial(link="cloglog"))
-summary(m.glm.2b)
+m.glm.1c3 <- glm(binary.runoff ~ lPrecipitation+Treatment,
+                 data = df.sub,
+                 family = binomial(link="cloglog"))
+summary(m.glm.1c3)
 
-anova(m.glm.2a,m.glm.2b, test="Chi")
-
+anova(m.glm.1c2,m.glm.1c3, test="Chi")
 ```
 
-From the summary, we see precipitation and treatment are now
-significant. From the anova, we see the new model is not significantly
-worse, so we accept m.glm.2b as the best model.
+All treatment categories are now significant and the new model is not
+significantly 'worse', so we accept m.glm.1c3 as the best model
+
+#### Goodness of Fit Tests
+
+We perform a Hosmer-Lemeshow Goodness of Fit Test, a Wald test and a
+Person Chi Test as a goodness of fit test for the best binomial model.
+
+```{r}
+# perform the Hosmer-Lemeshow Goodness of Fit Test
+m.gof<-m.glm.1c3
+(ht <- hoslem.test(df.sub$binary.runoff, fitted(m.gof)))
+# perform the Wald test
+(wt <- regTermTest(m.gof, "lPrecipitation"))
+
+# perform a Likelihood Ratio Test
+(pt <- 1-pchisq(m.gof$null.deviance-m.gof$deviance, m.gof$df.null-m.gof$df.residual))
+
+# The Pearson chi-squared statistic, in the context of goodness-of-fit testing for logistic regression, should ideally have a value close to its degrees of freedom. If the Pearson chi-squared statistic is much larger than the degrees of freedom, it may indicate a lack of fit, suggesting that the model does not adequately represent the data.
+
+# In practice, you compare the Pearson chi-squared statistic to its degrees of freedom and use a chi-squared distribution to calculate a p-value. If the p-value is small (typically less than 0.05), it suggests that there is a significant lack of fit, and the model does not adequately explain the variation in the data.
+
+# For the Pearson chi-squared statistic, you're essentially conducting a chi-squared test to assess the goodness of fit:
+
+# Null Hypothesis (H0): The model fits the data well.
+# Alternative Hypothesis (Ha): The model does not fit the data well.
+# If the p-value is small (e.g., less than 0.05), you may conclude that the model does not fit the data well, indicating a problem with the model. However, if the p-value is not significantly small, it suggests that the model provides a reasonable fit to the data.
+
+# compile into one data frame 
+gof <- rbind(gof,data.frame(author=df.sub$Source[1],
+                  hoslem=ht$p.value,
+                  wald = as.numeric(wt$p),
+                  l.r = pt))
+save(gof,file="GoodnessOfFitBinomialModels.rda",compress="xz")
+```
 
 Finally, we compute the predicted values:
 
 ```{r}
-df.pred <- expand.grid(lPrecipitation=seq(min(df.sub$lPrecipitation)-2,max(df.sub$lPrecipitation)+1+0.2,length.out=100),
+df.sub$Treatments<-factor(df.sub$Treatments)
+df.pred <- expand.grid(lPrecipitation=seq(min(df.sub$lPrecipitation)-2,max(df.sub$lPrecipitation)+0.2,length.out=100),
                        Treatment=unique(df.sub$Treatment))
-df.pred$runoff.pred <-predict(m.glm.2b,df.pred,type="response")
+df.pred$runoff.pred <-predict(m.glm.1c3,df.pred,type="response")
 df.pred$Precipitation<-10^df.pred$lPrecipitation
 ```
 
